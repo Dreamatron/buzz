@@ -97,6 +97,7 @@ export function ChannelScreen({
   currentProfile,
   headerEndActions,
   idleAuxiliaryPanel,
+  idleAuxiliaryHeaderActions,
   idleAuxiliaryTitle,
   onAddFiles,
   onCloseIdleAuxiliaryPanel,
@@ -865,7 +866,11 @@ export function ChannelScreen({
                   canResetThreadPanelWidth={canResetThreadPanelWidth}
                   fetchOlder={fetchOlder}
                   header={channelHeader}
-                  {...{ idleAuxiliaryPanel, idleAuxiliaryTitle }}
+                  {...{
+                    idleAuxiliaryHeaderActions,
+                    idleAuxiliaryPanel,
+                    idleAuxiliaryTitle,
+                  }}
                   hasOlderMessages={hasOlderMessages}
                   historyExhausted={historyExhausted}
                   {...{ onAddFiles }}
