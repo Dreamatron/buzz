@@ -9,6 +9,7 @@ mod pool;
 mod pool_lifecycle;
 mod queue;
 mod relay;
+mod scope;
 mod setup_mode;
 mod usage;
 
@@ -2917,6 +2918,27 @@ async fn tokio_main() -> Result<()> {
                             // backed payload) so the cost is negligible.
                             let event_for_steer = buzz_event.event.clone();
                             let prompt_tag_for_steer = prompt_tag.clone();
+                            // Derive the session scope once, at admission, from
+                            // the operator policy, DM status, and NIP-10 thread
+                            // tags. Under the default `channel` policy this is
+                            // always a conversation scope, preserving today's
+                            // channel-keyed routing. Telemetry only for now —
+                            // queue/pool partitioning by scope lands in a
+                            // follow-up (see ticket outline steps 2–4).
+                            let session_scope = scope::SessionScope::derive(
+                                config.session_policy,
+                                buzz_event.channel_id,
+                                is_dm_channel(buzz_event.channel_id, &ctx.channel_info).await,
+                                &event_for_steer,
+                            );
+                            tracing::debug!(
+                                channel_id = %session_scope.channel_id(),
+                                scope = %session_scope.telemetry_label(),
+                                thread_scoped = session_scope.is_thread(),
+                                thread_root = session_scope.root_event_id().unwrap_or("-"),
+                                policy = %config.session_policy,
+                                "admitted event — resolved session scope"
+                            );
                             let accepted = queue.push(QueuedEvent {
                                 channel_id: buzz_event.channel_id,
                                 event: buzz_event.event,
@@ -6771,6 +6793,7 @@ mod build_mcp_servers_tests {
             initial_message: None,
             subscribe_mode: config::SubscribeMode::All,
             dedup_mode: config::DedupMode::Queue,
+            session_policy: scope::SessionPolicy::Channel,
             multiple_event_handling: config::MultipleEventHandling::Queue,
             ignore_self: true,
             kinds_override: None,
@@ -6995,6 +7018,7 @@ mod error_outcome_emission_tests {
             initial_message: None,
             subscribe_mode: config::SubscribeMode::All,
             dedup_mode: config::DedupMode::Queue,
+            session_policy: scope::SessionPolicy::Channel,
             multiple_event_handling: config::MultipleEventHandling::Queue,
             ignore_self: true,
             kinds_override: None,
