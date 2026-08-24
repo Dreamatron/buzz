@@ -1041,4 +1041,5 @@ impl Db {
 }
 
 #[cfg(test)]
-mod tests;
+#[path = "tests.rs"]
+mod postgres_tests;
