@@ -57,6 +57,7 @@ export function ChannelProjectFeatureBar({
 
   if (
     !context.project ||
+    context.project.projectChannelId === channel.id ||
     !Object.values(context.enabled).some(Boolean) ||
     channel.channelType === "dm"
   ) {

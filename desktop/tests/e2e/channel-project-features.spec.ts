@@ -74,40 +74,44 @@ test("first channel feature quietly creates one backing project", async ({
   ).toBeChecked();
   await page.getByTestId("auxiliary-panel-close").click();
 
-  await page.getByTestId("open-channel-tasks").click();
-  const tasksDialog = page.getByTestId("channel-tasks-dialog");
+  await expect(page.getByTestId("project-channel-home")).toBeVisible();
+  await expect(page.getByTestId("channel-project-feature-bar")).toHaveCount(0);
+  await page.getByTestId("project-home-context-tasks").click();
+  const tasksWorkspace = page.getByTestId("project-home-workspace-sheet");
+  await expect(tasksWorkspace).toHaveAttribute("data-tab", "issues");
   await expect(
-    tasksDialog.getByText("No tasks yet", { exact: true }),
+    tasksWorkspace.getByText("No tasks yet", { exact: true }),
   ).toBeVisible();
-  await tasksDialog.getByTestId("create-channel-task").click();
+  await page.getByTestId("project-home-workspace-sheet-create").click();
   await page.getByTestId("create-issue-title").fill("POC task");
   await page.getByTestId("create-issue-submit").click();
   await expect(
-    tasksDialog.getByText("POC task", { exact: true }),
-  ).toBeVisible();
-  await tasksDialog.getByRole("button", { name: "Close" }).click();
+    tasksWorkspace.getByTestId("project-issue-detail"),
+  ).toContainText("POC task");
+  await page
+    .getByTestId("focus-thread-drawer")
+    .getByTestId("auxiliary-panel-close")
+    .click();
 
-  await page.getByTestId("open-channel-breakouts").click();
-  const breakoutsDialog = page.getByTestId("channel-breakouts-dialog");
-  await expect(breakoutsDialog).toContainText("No breakout channels yet.");
-  await breakoutsDialog.getByTestId("create-breakout-channel").click();
+  await page.getByTestId("add-project-channel").click();
   await page.getByTestId("create-channel-name").fill("poc-breakout");
   await page.getByTestId("create-channel-submit").click();
-  await expect(
-    breakoutsDialog.getByText("poc-breakout", { exact: true }),
-  ).toBeVisible();
-  await breakoutsDialog.getByRole("button", { name: "Close" }).click();
+  await expect(page.getByTestId("chat-title")).toHaveText("poc-breakout");
 
-  await page.getByTestId("open-channel-repositories").click();
-  const repositoriesDialog = page.getByTestId("channel-repositories-dialog");
-  await expect(repositoriesDialog).toContainText(
-    "No related repositories yet.",
-  );
+  await page.getByTestId(`channel-${rootChannel.name}`).click();
+  await expect(page.getByTestId("project-channel-home")).toBeVisible();
   await expect(
-    repositoriesDialog.getByTestId("add-project-repository"),
+    page
+      .getByTestId("project-home-context-codebase")
+      .getByTestId("add-project-repository"),
   ).toBeVisible();
   await page.setViewportSize({ height: 844, width: 390 });
-  await expect(repositoriesDialog).toBeVisible();
+  await expect(page.getByTestId("project-channel-home")).toBeVisible();
+  await page.getByTestId("project-home-context-tasks").click();
+  const mobileTasksWorkspace = page.getByTestId("project-home-workspace-sheet");
+  await expect(
+    mobileTasksWorkspace.getByText("POC task", { exact: true }),
+  ).toBeVisible();
 });
 
 test("existing channel project data infers features without standalone Projects UI", async ({
@@ -200,6 +204,14 @@ test("existing channel project data infers features without standalone Projects 
     page.getByTestId("channel-feature-breakouts-switch"),
   ).toBeChecked();
   await page.getByTestId("auxiliary-panel-close").click();
+  await expect(page.getByTestId("project-channel-home")).toBeVisible();
+  await expect(page.getByTestId("channel-project-feature-bar")).toHaveCount(0);
+  await page.getByTestId("project-home-context-tasks").click();
+  await expect(
+    page
+      .getByTestId("project-home-workspace-sheet")
+      .getByText("Seeded task", { exact: true }),
+  ).toBeVisible();
 
   await page.getByTestId("open-settings").click();
   await page.getByTestId("profile-popover-settings").click();
