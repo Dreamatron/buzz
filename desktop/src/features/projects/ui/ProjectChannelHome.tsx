@@ -282,6 +282,7 @@ export function ProjectChannelHome({
         onSelectChat={() => selectView("chat")}
         project={project}
         projects={projects}
+        relatedChannelIds={channelFeatures.breakoutChannelIds}
         view="channels"
       />
     ) : activeView === "repos" ? (

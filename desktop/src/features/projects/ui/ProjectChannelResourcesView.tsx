@@ -20,6 +20,7 @@ export function ProjectChannelResourcesView({
   onSelectChat,
   project,
   projects,
+  relatedChannelIds,
   view,
 }: {
   channels: Channel[];
@@ -29,18 +30,20 @@ export function ProjectChannelResourcesView({
   onSelectChat: () => void;
   project: Project;
   projects: Project[];
+  relatedChannelIds?: readonly string[];
   view: "channels" | "repos";
 }) {
   if (view === "channels") {
     const channelsById = new Map(
       channels.map((candidate) => [candidate.id, candidate]),
     );
-    const boundChannels = listProjectBoundChannels(project).flatMap(
-      (binding) => {
-        const channel = channelsById.get(binding.channelId);
-        return channel ? [{ ...binding, channel }] : [];
-      },
-    );
+    const boundChannels = listProjectBoundChannels({
+      ...project,
+      relatedChannelIds: relatedChannelIds ?? project.relatedChannelIds,
+    }).flatMap((binding) => {
+      const channel = channelsById.get(binding.channelId);
+      return channel ? [{ ...binding, channel }] : [];
+    });
 
     return (
       <ResourceViewShell

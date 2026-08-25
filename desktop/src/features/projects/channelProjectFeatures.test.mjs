@@ -121,6 +121,7 @@ test("channel project helpers hide the primary repository and dedupe breakout ch
     legacy: false,
     projectChannelId: "root",
     primaryRepositoryAddress: primary.repoAddress,
+    relatedChannelIds: ["breakout", "extra", "root"],
     repositories: [primary, related, { ...related, id: "duplicate" }],
   };
 
@@ -133,5 +134,8 @@ test("channel project helpers hide the primary repository and dedupe breakout ch
       id: "duplicate",
     },
   ]);
-  assert.deepEqual(projectRelatedChannelIds(project, "root"), ["breakout"]);
+  assert.deepEqual(projectRelatedChannelIds(project, "root"), [
+    "breakout",
+    "extra",
+  ]);
 });

@@ -178,12 +178,15 @@ export function projectRelatedChannelIds(
   if (!project) return [];
   return [
     ...new Set(
-      project.repositories
-        .map((repository: Repository) => repository.channelId?.trim())
-        .filter(
-          (channelId): channelId is string =>
-            Boolean(channelId) && channelId !== rootChannelId,
+      [
+        ...(project.relatedChannelIds ?? []),
+        ...project.repositories.map((repository: Repository) =>
+          repository.channelId?.trim(),
         ),
+      ].filter(
+        (channelId): channelId is string =>
+          Boolean(channelId) && channelId !== rootChannelId,
+      ),
     ),
   ];
 }

@@ -29,6 +29,41 @@ async function acceptedProjectEvents(page: Page) {
   return page.evaluate(() => window.__BUZZ_E2E_ACCEPTED_PROJECT_EVENTS__ ?? []);
 }
 
+async function dragChannelToProject(
+  page: Page,
+  channelTestId: string,
+  projectTestId: string,
+) {
+  const sourceBox = await page.getByTestId(channelTestId).boundingBox();
+  const targetBox = await page.getByTestId(projectTestId).boundingBox();
+  if (!sourceBox || !targetBox) {
+    throw new Error(
+      "The channel or project row was not available for dragging.",
+    );
+  }
+  await page.mouse.move(
+    sourceBox.x + sourceBox.width / 2,
+    sourceBox.y + sourceBox.height / 2,
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    sourceBox.x + sourceBox.width / 2,
+    sourceBox.y + sourceBox.height / 2 + 8,
+    { steps: 4 },
+  );
+  await expect(page.getByTestId("sidebar-channel-drag-overlay")).toBeVisible();
+  await page.mouse.move(
+    targetBox.x + targetBox.width / 2,
+    targetBox.y + targetBox.height / 2,
+    { steps: 12 },
+  );
+  await page.mouse.up();
+  await expect(
+    page.getByTestId("sidebar-channel-drag-overlay"),
+  ).not.toBeVisible();
+  await page.mouse.move(600, 100);
+}
+
 test("first channel feature quietly creates one backing project", async ({
   page,
 }) => {
@@ -289,14 +324,30 @@ test("existing channel project data infers features without standalone Projects 
   await expect(projectDisclosure).toHaveAttribute("aria-expanded", "false");
   await projectDisclosure.click();
   await expect(page.getByTestId("channel-random")).toBeVisible();
-  await page.getByTestId("channel-general").click();
-  await page.getByTestId("channel-management-trigger").click();
+  await dragChannelToProject(
+    page,
+    "channel-deep-history",
+    "project-channel-group-general",
+  );
+  await expect(
+    projectGroup
+      .locator("xpath=following-sibling::*")
+      .getByTestId("channel-deep-history"),
+  ).toBeVisible();
+  await openGeneralChannelSettings(page);
   await expect(
     page.getByTestId("channel-feature-breakouts-switch"),
   ).toBeChecked();
   await page.getByTestId("auxiliary-panel-close").click();
   await expect(page.getByTestId("project-channel-home")).toBeVisible();
   await expect(page.getByTestId("channel-project-feature-bar")).toHaveCount(0);
+  await page.getByTestId("project-channel-tab-channels").click();
+  await expect(
+    page.getByTestId("project-channel-resource-channel-random"),
+  ).toBeVisible();
+  await expect(
+    page.getByTestId("project-channel-resource-channel-deep-history"),
+  ).toBeVisible();
   await page.getByTestId("project-channel-tab-tasks").click();
   await expect(
     page
