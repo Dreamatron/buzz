@@ -29,7 +29,7 @@ export function ProjectChannelResourcesView({
   onSelectChat: () => void;
   project: Project;
   projects: Project[];
-  view: "channels" | "codebase";
+  view: "channels" | "repos";
 }) {
   if (view === "channels") {
     const channelsById = new Map(
@@ -102,8 +102,8 @@ export function ProjectChannelResourcesView({
         />
       }
       description="Repositories related to this channel"
-      testId="project-channel-content-codebase"
-      title="Codebase"
+      testId="project-channel-content-repos"
+      title="Repos"
     >
       {project.repositories.length > 0 ? (
         project.repositories.map((repository) => (

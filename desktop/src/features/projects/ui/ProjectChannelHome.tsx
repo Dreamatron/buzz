@@ -10,7 +10,6 @@ import { useCommunities } from "@/features/communities/useCommunities";
 import { useProfileQuery } from "@/features/profile/hooks";
 import type { Project } from "@/features/projects/hooks";
 import {
-  isProjectHomeWorkspaceSheetTab,
   projectHomeWorkspaceSheetExpandTab,
   projectHomeWorkspaceSheetTitle,
 } from "@/features/projects/lib/projectHomeWorkspaceSheet";
@@ -24,8 +23,10 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { ViewLoadingFallback } from "@/shared/ui/ViewLoadingFallback";
 import { ProjectChannelResourcesView } from "./ProjectChannelResourcesView";
 import {
+  ProjectChannelRepositoryTabs,
   ProjectChannelTabs,
   projectChannelViewEnabled,
+  type ProjectChannelRepositoryView,
   type ProjectChannelView,
 } from "./ProjectChannelTabs";
 import { ProjectDetailChrome } from "./ProjectDetailChrome";
@@ -72,6 +73,8 @@ export function ProjectChannelHome({
   };
   const [activeView, setActiveView] =
     React.useState<ProjectChannelView>("chat");
+  const [repositoryView, setRepositoryView] =
+    React.useState<ProjectChannelRepositoryView>("repos");
   const [addRepositoryOpen, setAddRepositoryOpen] = React.useState(false);
   const [workspaceRepositoryId, setWorkspaceRepositoryId] = React.useState<
     string | null
@@ -90,9 +93,12 @@ export function ProjectChannelHome({
       (candidate) => candidate.id === project.projectChannelId,
     ) ?? null;
   const waitingForChannel = channelsQuery.isPending && !homeChannel;
-  const workspaceTab = isProjectHomeWorkspaceSheetTab(activeView)
-    ? activeView
-    : null;
+  const workspaceTab =
+    activeView === "issues"
+      ? activeView
+      : activeView === "repos" && repositoryView !== "repos"
+        ? repositoryView
+        : null;
   const workspaceRepository =
     project.repositories.find(
       (repository) => repository.id === workspaceRepositoryId,
@@ -102,13 +108,25 @@ export function ProjectChannelHome({
 
   const selectView = React.useCallback(
     (view: ProjectChannelView) => {
-      if (isProjectHomeWorkspaceSheetTab(view) && !workspaceRepository) {
+      if (view === "issues" && !workspaceRepository) {
         setAddRepositoryOpen(true);
         return;
       }
       setWorkspaceCreateAction(null);
       setWorkspaceDetail(null);
       setActiveView(view);
+    },
+    [workspaceRepository],
+  );
+  const selectRepositoryView = React.useCallback(
+    (view: ProjectChannelRepositoryView) => {
+      if (view !== "repos" && !workspaceRepository) {
+        setAddRepositoryOpen(true);
+        return;
+      }
+      setWorkspaceCreateAction(null);
+      setWorkspaceDetail(null);
+      setRepositoryView(view);
     },
     [workspaceRepository],
   );
@@ -131,7 +149,8 @@ export function ProjectChannelHome({
     setWorkspaceCreateAction(null);
     setWorkspaceDetail(null);
     setWorkspaceRepositoryId(repositoryId);
-    setActiveView("files");
+    setRepositoryView("files");
+    setActiveView("repos");
   }, []);
   const handleWorkspaceRepositoryChange = React.useCallback(
     (repositoryId: string) => {
@@ -254,7 +273,7 @@ export function ProjectChannelHome({
       </div>
     ) : null;
   const mainContent =
-    activeView === "channels" || activeView === "codebase" ? (
+    activeView === "channels" ? (
       <ProjectChannelResourcesView
         channels={channelsQuery.data ?? []}
         identityPubkey={identityQuery.data?.pubkey}
@@ -263,14 +282,37 @@ export function ProjectChannelHome({
         onSelectChat={() => selectView("chat")}
         project={project}
         projects={projects}
-        view={activeView}
+        view="channels"
       />
+    ) : activeView === "repos" ? (
+      <div className="flex min-h-0 flex-1 flex-col">
+        <ProjectChannelRepositoryTabs
+          activeView={repositoryView}
+          onSelect={selectRepositoryView}
+        />
+        {repositoryView === "repos" ? (
+          <ProjectChannelResourcesView
+            channels={channelsQuery.data ?? []}
+            identityPubkey={identityQuery.data?.pubkey}
+            onOpenChannel={(channelId) => void goChannel(channelId)}
+            onOpenRepository={handleOpenRepository}
+            onSelectChat={() => selectView("chat")}
+            project={project}
+            projects={projects}
+            view="repos"
+          />
+        ) : (
+          workspaceContent
+        )}
+      </div>
     ) : (
       workspaceContent
     );
 
   return (
-    <ProjectSelectionProvider resetKey={`${project.id}:${activeView}`}>
+    <ProjectSelectionProvider
+      resetKey={`${project.id}:${activeView}:${repositoryView}`}
+    >
       <div
         className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background"
         data-project-detail-screen

@@ -1,12 +1,13 @@
 import type { ChannelProjectFeature } from "@/features/projects/channelProjectFeatures";
-import type { ProjectHomeWorkspaceSheetTab } from "@/features/projects/lib/projectHomeWorkspaceSheet";
 import { cn } from "@/shared/lib/cn";
 
-export type ProjectChannelView =
-  | "chat"
-  | ProjectHomeWorkspaceSheetTab
-  | "channels"
-  | "codebase";
+export type ProjectChannelView = "chat" | "issues" | "channels" | "repos";
+
+export type ProjectChannelRepositoryView =
+  | "repos"
+  | "prs"
+  | "commits"
+  | "files";
 
 const PROJECT_CHANNEL_TABS: Array<{
   feature: ChannelProjectFeature;
@@ -21,30 +22,6 @@ const PROJECT_CHANNEL_TABS: Array<{
     value: "issues",
   },
   {
-    feature: "repositories",
-    label: "Reviews",
-    testId: "project-channel-tab-reviews",
-    value: "prs",
-  },
-  {
-    feature: "repositories",
-    label: "Commits",
-    testId: "project-channel-tab-commits",
-    value: "commits",
-  },
-  {
-    feature: "repositories",
-    label: "Files",
-    testId: "project-channel-tab-files",
-    value: "files",
-  },
-  {
-    feature: "repositories",
-    label: "People",
-    testId: "project-channel-tab-people",
-    value: "contributors",
-  },
-  {
     feature: "breakouts",
     label: "Channels",
     testId: "project-channel-tab-channels",
@@ -52,9 +29,36 @@ const PROJECT_CHANNEL_TABS: Array<{
   },
   {
     feature: "repositories",
-    label: "Codebase",
-    testId: "project-channel-tab-codebase",
-    value: "codebase",
+    label: "Repos",
+    testId: "project-channel-tab-repos",
+    value: "repos",
+  },
+];
+
+const PROJECT_CHANNEL_REPOSITORY_TABS: Array<{
+  label: string;
+  testId: string;
+  value: ProjectChannelRepositoryView;
+}> = [
+  {
+    label: "Repos",
+    testId: "project-channel-repos-tab-repos",
+    value: "repos",
+  },
+  {
+    label: "Reviews",
+    testId: "project-channel-repos-tab-reviews",
+    value: "prs",
+  },
+  {
+    label: "Commits",
+    testId: "project-channel-repos-tab-commits",
+    value: "commits",
+  },
+  {
+    label: "Files",
+    testId: "project-channel-repos-tab-files",
+    value: "files",
   },
 ];
 
@@ -101,6 +105,40 @@ export function ProjectChannelTabs({
           </button>
         ) : null,
       )}
+    </div>
+  );
+}
+
+export function ProjectChannelRepositoryTabs({
+  activeView,
+  onSelect,
+}: {
+  activeView: ProjectChannelRepositoryView;
+  onSelect: (view: ProjectChannelRepositoryView) => void;
+}) {
+  return (
+    <div
+      aria-label="Repository views"
+      className="flex h-10 shrink-0 items-stretch overflow-x-auto border-b border-border/60 px-2 scrollbar-none"
+      data-testid="project-channel-repos-tabs"
+      role="tablist"
+    >
+      {PROJECT_CHANNEL_REPOSITORY_TABS.map((tab) => (
+        <button
+          aria-selected={activeView === tab.value}
+          className={cn(
+            "relative h-10 shrink-0 px-2 text-xs font-medium text-muted-foreground outline-hidden transition-colors after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:bg-transparent after:content-[''] hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+            activeView === tab.value && "text-foreground after:bg-foreground",
+          )}
+          data-testid={tab.testId}
+          key={tab.value}
+          onClick={() => onSelect(tab.value)}
+          role="tab"
+          type="button"
+        >
+          {tab.label}
+        </button>
+      ))}
     </div>
   );
 }
