@@ -200,9 +200,7 @@ export function ChannelScreen({
       previousActiveChannelIdRef.current !== activeChannelId;
     previousActiveChannelIdRef.current = activeChannelId;
     setOptimisticOpenThreadHeadId((current) => {
-      if (current === undefined) {
-        return current;
-      }
+      if (current === undefined) return current;
       return didChangeChannel || openThreadHeadId === current
         ? undefined
         : current;
@@ -386,9 +384,7 @@ export function ChannelScreen({
   const agentPubkeys = React.useMemo(() => {
     const pubkeys = new Set([...communityAgentPubkeys, ...knownAgentPubkeys]);
     for (const [pubkey, profile] of Object.entries(messageProfiles)) {
-      if (profile.isAgent) {
-        pubkeys.add(normalizePubkey(pubkey));
-      }
+      if (profile.isAgent) pubkeys.add(normalizePubkey(pubkey));
     }
     return pubkeys;
   }, [knownAgentPubkeys, messageProfiles, communityAgentPubkeys]);
@@ -722,14 +718,9 @@ export function ChannelScreen({
   });
   const handleManageChannel = React.useCallback(() => {
     if (!requireThreadEditResolution()) return;
-    if (activeChannel?.channelType === "forum") {
-      openGlobalChannelManagement();
-      return;
-    }
-    if (channelManagementOpen) {
-      setChannelManagementOpen(false);
-      return;
-    }
+    if (activeChannel?.channelType === "forum")
+      return openGlobalChannelManagement();
+    if (channelManagementOpen) return setChannelManagementOpen(false);
     setOpenThreadHeadId(null);
     setExpandedThreadReplyIds(new Set());
     setThreadScrollTargetId(null);

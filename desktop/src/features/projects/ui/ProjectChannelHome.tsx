@@ -97,7 +97,7 @@ export function ProjectChannelHome({
   targetMessageEvents?: RelayEvent[];
   targetMessageId?: string | null;
 }) {
-  const { goChannel, goProject, goProjects } = useAppNavigation();
+  const { goChannel, goProject } = useAppNavigation();
   const sidebar = useOptionalSidebar();
   const identityQuery = useIdentityQuery();
   const profileQuery = useProfileQuery();
@@ -298,8 +298,10 @@ export function ProjectChannelHome({
             activeTabCrumb={null}
             activeWorkItemCrumb={null}
             onGoProjectHome={() => undefined}
-            onGoProjects={() => {
-              void goProjects();
+            onGoRootChannel={() => {
+              if (project.projectChannelId) {
+                void goChannel(project.projectChannelId);
+              }
             }}
             project={project}
           />
