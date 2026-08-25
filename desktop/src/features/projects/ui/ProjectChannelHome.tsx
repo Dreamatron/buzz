@@ -5,6 +5,7 @@ import * as React from "react";
 import { useAppNavigation } from "@/app/navigation/useAppNavigation";
 import { useChannelsQuery } from "@/features/channels/hooks";
 import { ChannelScreenLoadingFallback } from "@/features/channels/ui/ChannelScreenLoadingFallback";
+import { useCommunities } from "@/features/communities/useCommunities";
 import { useProfileQuery } from "@/features/profile/hooks";
 import type { Project } from "@/features/projects/hooks";
 import {
@@ -15,8 +16,9 @@ import {
 } from "@/features/projects/lib/projectHomeWorkspaceSheet";
 import { ProjectSelectionProvider } from "@/features/projects/lib/useProjectSelection";
 import { useHealProjectHomeRepositories } from "@/features/projects/useHealProjectHomeRepositories";
+import { useChannelProjectFeatures } from "@/features/projects/useChannelProjectFeatures";
 import { useIdentityQuery } from "@/shared/api/hooks";
-import type { RelayEvent } from "@/shared/api/types";
+import type { Channel, RelayEvent } from "@/shared/api/types";
 import type { EntityLinkTab } from "@/shared/lib/entityLink";
 import { useThreadPanelWidth } from "@/shared/hooks/useThreadPanelWidth";
 import { SIDEBAR_WIDTH_MIN } from "@/shared/layout/sidebarLayout";
@@ -86,12 +88,14 @@ function ProjectHomeHeaderToggle({
 
 export function ProjectChannelHome({
   autoSendDraftKey,
+  channel,
   project,
   projects,
   targetMessageEvents = EMPTY_TARGET_MESSAGE_EVENTS,
   targetMessageId,
 }: {
   autoSendDraftKey?: string | null;
+  channel: Channel;
   project: Project;
   projects: Project[];
   targetMessageEvents?: RelayEvent[];
@@ -99,6 +103,7 @@ export function ProjectChannelHome({
 }) {
   const { goChannel, goProject } = useAppNavigation();
   const sidebar = useOptionalSidebar();
+  const { activeCommunity } = useCommunities();
   const identityQuery = useIdentityQuery();
   const profileQuery = useProfileQuery();
   const channelsQuery = useChannelsQuery();
@@ -121,9 +126,14 @@ export function ProjectChannelHome({
     minWidthPx: SIDEBAR_WIDTH_MIN,
     sessionKey: PROJECT_HOME_SUMMARY_WIDTH_KEY,
   });
+  const channelFeatures = useChannelProjectFeatures({
+    channel,
+    currentPubkey: identityQuery.data?.pubkey,
+    relayUrl: activeCommunity?.relayUrl,
+  });
   const homeChannel =
     channelsQuery.data?.find(
-      (channel) => channel.id === project.projectChannelId,
+      (candidate) => candidate.id === project.projectChannelId,
     ) ?? null;
   const waitingForChannel = channelsQuery.isPending && !homeChannel;
   const workspaceRepository =
@@ -158,6 +168,14 @@ export function ProjectChannelHome({
     setWorkspaceDetail(null);
     setWorkspaceSheetTab(null);
   }, []);
+  const workspaceFeatureEnabled =
+    workspaceSheetTab == null ||
+    (workspaceSheetTab === "issues"
+      ? channelFeatures.enabled.tasks
+      : channelFeatures.enabled.repositories);
+  React.useEffect(() => {
+    if (!workspaceFeatureEnabled) closeWorkspaceSheet();
+  }, [closeWorkspaceSheet, workspaceFeatureEnabled]);
   const handleOpenWorkspace = React.useCallback(
     (repositoryId: string, tab?: EntityLinkTab) => {
       if (!isProjectHomeWorkspaceSheetTab(tab)) {
@@ -379,7 +397,11 @@ export function ProjectChannelHome({
                     ? projectHomeWorkspaceSheetTitle(workspaceSheetTab)
                     : ""
                 }
-                onAddFiles={handleAddFiles}
+                onAddFiles={
+                  channelFeatures.enabled.repositories
+                    ? handleAddFiles
+                    : undefined
+                }
                 onCloseIdleAuxiliaryPanel={closeWorkspaceSheet}
                 onCloseForumPost={ignoreForumPost}
                 onSelectForumPost={ignoreForumPostSelect}
@@ -429,8 +451,9 @@ export function ProjectChannelHome({
             >
               <ProjectHomeContextPanel
                 activeWorkspaceTab={workspaceSheetTab}
-                channel={homeChannel}
+                channel={channel}
                 channels={channelsQuery.data ?? []}
+                enabledFeatures={channelFeatures.enabled}
                 identityPubkey={identityQuery.data?.pubkey}
                 onAddRepository={handleAddFiles}
                 onOpenChannel={(channelId) => {
