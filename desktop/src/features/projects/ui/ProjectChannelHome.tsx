@@ -23,10 +23,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { ViewLoadingFallback } from "@/shared/ui/ViewLoadingFallback";
 import { ProjectChannelResourcesView } from "./ProjectChannelResourcesView";
 import {
-  ProjectChannelRepositoryTabs,
   ProjectChannelTabs,
   projectChannelViewEnabled,
-  type ProjectChannelRepositoryView,
   type ProjectChannelView,
 } from "./ProjectChannelTabs";
 import { ProjectDetailChrome } from "./ProjectDetailChrome";
@@ -73,8 +71,6 @@ export function ProjectChannelHome({
   };
   const [activeView, setActiveView] =
     React.useState<ProjectChannelView>("chat");
-  const [repositoryView, setRepositoryView] =
-    React.useState<ProjectChannelRepositoryView>("repos");
   const [addRepositoryOpen, setAddRepositoryOpen] = React.useState(false);
   const [workspaceRepositoryId, setWorkspaceRepositoryId] = React.useState<
     string | null
@@ -95,9 +91,9 @@ export function ProjectChannelHome({
   const waitingForChannel = channelsQuery.isPending && !homeChannel;
   const workspaceTab =
     activeView === "issues"
-      ? activeView
-      : activeView === "repos" && repositoryView !== "repos"
-        ? repositoryView
+      ? "issues"
+      : activeView === "reviews"
+        ? "prs"
         : null;
   const workspaceRepository =
     project.repositories.find(
@@ -108,25 +104,13 @@ export function ProjectChannelHome({
 
   const selectView = React.useCallback(
     (view: ProjectChannelView) => {
-      if (view === "issues" && !workspaceRepository) {
+      if ((view === "issues" || view === "reviews") && !workspaceRepository) {
         setAddRepositoryOpen(true);
         return;
       }
       setWorkspaceCreateAction(null);
       setWorkspaceDetail(null);
       setActiveView(view);
-    },
-    [workspaceRepository],
-  );
-  const selectRepositoryView = React.useCallback(
-    (view: ProjectChannelRepositoryView) => {
-      if (view !== "repos" && !workspaceRepository) {
-        setAddRepositoryOpen(true);
-        return;
-      }
-      setWorkspaceCreateAction(null);
-      setWorkspaceDetail(null);
-      setRepositoryView(view);
     },
     [workspaceRepository],
   );
@@ -145,13 +129,12 @@ export function ProjectChannelHome({
   const handleAddFiles = React.useCallback(() => {
     setAddRepositoryOpen(true);
   }, []);
-  const handleFilesAdded = React.useCallback((repositoryId: string) => {
-    setWorkspaceCreateAction(null);
-    setWorkspaceDetail(null);
-    setWorkspaceRepositoryId(repositoryId);
-    setRepositoryView("files");
-    setActiveView("repos");
-  }, []);
+  const handleFilesAdded = React.useCallback(
+    (repositoryId: string) => {
+      void goProject(project.id, { repositoryId, tab: "files" });
+    },
+    [goProject, project.id],
+  );
   const handleWorkspaceRepositoryChange = React.useCallback(
     (repositoryId: string) => {
       setWorkspaceCreateAction(null);
@@ -286,34 +269,22 @@ export function ProjectChannelHome({
         view="channels"
       />
     ) : activeView === "repos" ? (
-      <div className="flex min-h-0 flex-1 flex-col">
-        <ProjectChannelRepositoryTabs
-          activeView={repositoryView}
-          onSelect={selectRepositoryView}
-        />
-        {repositoryView === "repos" ? (
-          <ProjectChannelResourcesView
-            channels={channelsQuery.data ?? []}
-            identityPubkey={identityQuery.data?.pubkey}
-            onOpenChannel={(channelId) => void goChannel(channelId)}
-            onOpenRepository={handleOpenRepository}
-            onSelectChat={() => selectView("chat")}
-            project={project}
-            projects={projects}
-            view="repos"
-          />
-        ) : (
-          workspaceContent
-        )}
-      </div>
+      <ProjectChannelResourcesView
+        channels={channelsQuery.data ?? []}
+        identityPubkey={identityQuery.data?.pubkey}
+        onOpenChannel={(channelId) => void goChannel(channelId)}
+        onOpenRepository={handleOpenRepository}
+        onSelectChat={() => selectView("chat")}
+        project={project}
+        projects={projects}
+        view="repos"
+      />
     ) : (
       workspaceContent
     );
 
   return (
-    <ProjectSelectionProvider
-      resetKey={`${project.id}:${activeView}:${repositoryView}`}
-    >
+    <ProjectSelectionProvider resetKey={`${project.id}:${activeView}`}>
       <div
         className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background"
         data-project-detail-screen

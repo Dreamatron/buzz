@@ -259,7 +259,9 @@ export function ProjectHomeContextPanel({
           ]
         : [];
   const workspaceEnabled =
-    enabledFeatures.tasks || enabledFeatures.repositories;
+    enabledFeatures.tasks ||
+    enabledFeatures.reviews ||
+    enabledFeatures.repositories;
 
   return (
     <div
@@ -281,19 +283,21 @@ export function ProjectHomeContextPanel({
               Tasks
             </ContextNavButton>
           ) : null}
+          {enabledFeatures.reviews ? (
+            <ContextNavButton
+              count={presentContextCount(activity?.prCount)}
+              disabled={!firstRepository && !onAddRepository}
+              icon={<GitPullRequest />}
+              onClick={() => openWorkspace("prs")}
+              pressed={activeWorkspaceTab === "prs"}
+              testId="project-home-context-reviews"
+              title={addRepositoryTitle}
+            >
+              Reviews
+            </ContextNavButton>
+          ) : null}
           {enabledFeatures.repositories ? (
             <>
-              <ContextNavButton
-                count={presentContextCount(activity?.prCount)}
-                disabled={!firstRepository && !onAddRepository}
-                icon={<GitPullRequest />}
-                onClick={() => openWorkspace("prs")}
-                pressed={activeWorkspaceTab === "prs"}
-                testId="project-home-context-reviews"
-                title={addRepositoryTitle}
-              >
-                Reviews
-              </ContextNavButton>
               <ContextNavButton
                 count={presentContextCount(activity?.commitCount)}
                 disabled={!firstRepository && !onAddRepository}

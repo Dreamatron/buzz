@@ -29,7 +29,7 @@ test("feature preferences are scoped by viewer, relay, and channel", () => {
     "viewer-a",
     "wss://relay-a.example/",
     "channel-a",
-    { tasks: true },
+    { reviews: true, tasks: true },
   );
 
   assert.deepEqual(
@@ -38,7 +38,7 @@ test("feature preferences are scoped by viewer, relay, and channel", () => {
       "wss://relay-a.example",
       "channel-a",
     ),
-    { tasks: true },
+    { reviews: true, tasks: true },
   );
   assert.deepEqual(
     readChannelProjectFeaturePreferences(
@@ -75,13 +75,13 @@ test("malformed feature storage fails closed", () => {
     parseChannelProjectFeatureStore({
       version: 1,
       channels: {
-        valid: { tasks: true, repositories: "yes" },
+        valid: { reviews: true, tasks: true, repositories: "yes" },
         empty: null,
       },
     }),
     {
       version: 1,
-      channels: { valid: { tasks: true }, empty: {} },
+      channels: { valid: { reviews: true, tasks: true }, empty: {} },
     },
   );
 });

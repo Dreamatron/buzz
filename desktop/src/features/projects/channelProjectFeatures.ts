@@ -7,11 +7,16 @@ const MAX_CHANNEL_PREFERENCES = 1_000;
 export const CHANNEL_PROJECT_FEATURES_CHANGED_EVENT =
   "buzz:channel-project-features-changed";
 
-export type ChannelProjectFeature = "tasks" | "breakouts" | "repositories";
+export type ChannelProjectFeature =
+  | "tasks"
+  | "breakouts"
+  | "reviews"
+  | "repositories";
 
 export type ChannelProjectFeaturePreferences = {
   tasks?: boolean;
   breakouts?: boolean;
+  reviews?: boolean;
   repositories?: boolean;
   breakoutSectionId?: string;
 };
@@ -39,6 +44,9 @@ function parsePreferences(value: unknown): ChannelProjectFeaturePreferences {
     ...(typeof candidate.tasks === "boolean" ? { tasks: candidate.tasks } : {}),
     ...(typeof candidate.breakouts === "boolean"
       ? { breakouts: candidate.breakouts }
+      : {}),
+    ...(typeof candidate.reviews === "boolean"
+      ? { reviews: candidate.reviews }
       : {}),
     ...(typeof candidate.repositories === "boolean"
       ? { repositories: candidate.repositories }

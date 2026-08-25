@@ -4,7 +4,11 @@ import { useChannelsQuery } from "@/features/channels/hooks";
 import { useChannelSections } from "@/features/sidebar/lib/useChannelSections";
 import type { Channel } from "@/shared/api/types";
 
-import { useProjectIssuesQuery, useProjectsQuery } from "./hooks";
+import {
+  useProjectActivitySummariesQuery,
+  useProjectIssuesQuery,
+  useProjectsQuery,
+} from "./hooks";
 import {
   CHANNEL_PROJECT_FEATURES_CHANGED_EVENT,
   channelProjectFeatureEnabled,
@@ -40,6 +44,12 @@ export function useChannelProjectFeatures({
   const relatedRepositories = projectRelatedRepositories(project);
   const relatedChannelIds = projectRelatedChannelIds(project, channel.id);
   const issuesQuery = useProjectIssuesQuery(primaryRepository);
+  const projectActivityQuery = useProjectActivitySummariesQuery(
+    project ? [project] : [],
+  );
+  const projectActivity = project
+    ? projectActivityQuery.data?.[project.id]
+    : undefined;
   const breakoutSection =
     channelSections.sections.find(
       (section) => section.id === preferences.breakoutSectionId,
@@ -58,6 +68,7 @@ export function useChannelProjectFeatures({
   const existing = {
     tasks: (issuesQuery.data?.length ?? 0) > 0,
     breakouts: breakoutChannelIds.length > 0,
+    reviews: (projectActivity?.prCount ?? 0) > 0,
     repositories: relatedRepositories.length > 0,
   };
   const enabled = {
@@ -69,6 +80,11 @@ export function useChannelProjectFeatures({
     breakouts: channelProjectFeatureEnabled({
       feature: "breakouts",
       hasExistingData: existing.breakouts,
+      preferences,
+    }),
+    reviews: channelProjectFeatureEnabled({
+      feature: "reviews",
+      hasExistingData: existing.reviews,
       preferences,
     }),
     repositories: channelProjectFeatureEnabled({
@@ -193,6 +209,7 @@ export function useChannelProjectFeatures({
     enabled,
     existing,
     issuesQuery,
+    projectActivityQuery,
     preferences,
     primaryRepository,
     project,

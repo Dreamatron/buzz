@@ -1,6 +1,7 @@
 import {
   ArrowLeft,
   GitBranch,
+  GitPullRequest,
   Hash,
   ListTodo,
   MessagesSquare,
@@ -38,7 +39,7 @@ export function ChannelProjectFeatureBar({
   currentPubkey?: string;
 }) {
   const { activeCommunity } = useCommunities();
-  const { goChannel } = useAppNavigation();
+  const { goChannel, goProject } = useAppNavigation();
   const context = useChannelProjectFeatures({
     channel,
     currentPubkey,
@@ -54,10 +55,11 @@ export function ChannelProjectFeatureBar({
   const [selectedIssueId, setSelectedIssueId] = React.useState<string | null>(
     null,
   );
+  const project = context.project;
 
   if (
-    !context.project ||
-    context.project.projectChannelId === channel.id ||
+    !project ||
+    project.projectChannelId === channel.id ||
     !Object.values(context.enabled).some(Boolean) ||
     channel.channelType === "dm"
   ) {
@@ -92,6 +94,19 @@ export function ChannelProjectFeatureBar({
             label="Breakout channels"
             onClick={() => setOpenTool("breakouts")}
             testId="open-channel-breakouts"
+          />
+        ) : null}
+        {context.enabled.reviews && context.primaryRepository ? (
+          <FeatureButton
+            icon={GitPullRequest}
+            label="Reviews"
+            onClick={() =>
+              void goProject(project.id, {
+                repositoryId: context.primaryRepository?.id,
+                tab: "prs",
+              })
+            }
+            testId="open-channel-reviews"
           />
         ) : null}
         {context.enabled.repositories ? (
@@ -229,7 +244,7 @@ export function ChannelProjectFeatureBar({
               compact
               identityPubkey={currentPubkey}
               onChange={() => context.setFeatureEnabled("repositories", true)}
-              project={context.project}
+              project={project}
               projects={context.projects}
               repository={context.primaryRepository}
               showAccessManagement={false}

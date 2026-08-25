@@ -1,13 +1,13 @@
 import type { ChannelProjectFeature } from "@/features/projects/channelProjectFeatures";
 import { cn } from "@/shared/lib/cn";
+import * as React from "react";
 
-export type ProjectChannelView = "chat" | "issues" | "channels" | "repos";
-
-export type ProjectChannelRepositoryView =
-  | "repos"
-  | "prs"
-  | "commits"
-  | "files";
+export type ProjectChannelView =
+  | "chat"
+  | "issues"
+  | "channels"
+  | "reviews"
+  | "repos";
 
 const PROJECT_CHANNEL_TABS: Array<{
   feature: ChannelProjectFeature;
@@ -28,37 +28,16 @@ const PROJECT_CHANNEL_TABS: Array<{
     value: "channels",
   },
   {
+    feature: "reviews",
+    label: "Reviews",
+    testId: "project-channel-tab-reviews",
+    value: "reviews",
+  },
+  {
     feature: "repositories",
     label: "Repos",
     testId: "project-channel-tab-repos",
     value: "repos",
-  },
-];
-
-const PROJECT_CHANNEL_REPOSITORY_TABS: Array<{
-  label: string;
-  testId: string;
-  value: ProjectChannelRepositoryView;
-}> = [
-  {
-    label: "Repos",
-    testId: "project-channel-repos-tab-repos",
-    value: "repos",
-  },
-  {
-    label: "Reviews",
-    testId: "project-channel-repos-tab-reviews",
-    value: "prs",
-  },
-  {
-    label: "Commits",
-    testId: "project-channel-repos-tab-commits",
-    value: "commits",
-  },
-  {
-    label: "Files",
-    testId: "project-channel-repos-tab-files",
-    value: "files",
   },
 ];
 
@@ -82,6 +61,23 @@ export function ProjectChannelTabs({
   enabledFeatures: Record<ChannelProjectFeature, boolean>;
   onSelect: (view: ProjectChannelView) => void;
 }) {
+  const activeTabRef = React.useRef<HTMLButtonElement>(null);
+  const setActiveTabRef = React.useCallback((tab: HTMLButtonElement | null) => {
+    activeTabRef.current = tab;
+    tab?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, []);
+
+  React.useEffect(() => {
+    const revealActiveTab = () => {
+      activeTabRef.current?.scrollIntoView({
+        block: "nearest",
+        inline: "nearest",
+      });
+    };
+    window.addEventListener("resize", revealActiveTab);
+    return () => window.removeEventListener("resize", revealActiveTab);
+  }, []);
+
   return (
     <div
       className="flex h-9 min-w-max items-stretch"
@@ -98,6 +94,7 @@ export function ProjectChannelTabs({
             data-testid={tab.testId}
             key={tab.value}
             onClick={() => onSelect(tab.value)}
+            ref={activeView === tab.value ? setActiveTabRef : undefined}
             role="tab"
             type="button"
           >
@@ -105,40 +102,6 @@ export function ProjectChannelTabs({
           </button>
         ) : null,
       )}
-    </div>
-  );
-}
-
-export function ProjectChannelRepositoryTabs({
-  activeView,
-  onSelect,
-}: {
-  activeView: ProjectChannelRepositoryView;
-  onSelect: (view: ProjectChannelRepositoryView) => void;
-}) {
-  return (
-    <div
-      aria-label="Repository views"
-      className="flex h-10 shrink-0 items-stretch overflow-x-auto border-b border-border/60 px-2 scrollbar-none"
-      data-testid="project-channel-repos-tabs"
-      role="tablist"
-    >
-      {PROJECT_CHANNEL_REPOSITORY_TABS.map((tab) => (
-        <button
-          aria-selected={activeView === tab.value}
-          className={cn(
-            "relative h-10 shrink-0 px-2 text-xs font-medium text-muted-foreground outline-hidden transition-colors after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:bg-transparent after:content-[''] hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-            activeView === tab.value && "text-foreground after:bg-foreground",
-          )}
-          data-testid={tab.testId}
-          key={tab.value}
-          onClick={() => onSelect(tab.value)}
-          role="tab"
-          type="button"
-        >
-          {tab.label}
-        </button>
-      ))}
     </div>
   );
 }

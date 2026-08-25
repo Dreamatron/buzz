@@ -1,5 +1,6 @@
 import {
   GitBranch,
+  GitPullRequest,
   ListTodo,
   MessagesSquare,
   type LucideIcon,
@@ -23,6 +24,7 @@ const FEATURES: Array<{
 }> = [
   { feature: "tasks", icon: ListTodo, label: "Tasks" },
   { feature: "breakouts", icon: MessagesSquare, label: "Breakout channels" },
+  { feature: "reviews", icon: GitPullRequest, label: "Reviews" },
   { feature: "repositories", icon: GitBranch, label: "Related repositories" },
 ];
 
