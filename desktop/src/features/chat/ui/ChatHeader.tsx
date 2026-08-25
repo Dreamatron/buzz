@@ -31,9 +31,12 @@ type ChatHeaderProps = {
   visibility?: ChannelVisibility;
   leadingContent?: React.ReactNode;
   mode?: "home" | "channel" | "agents" | "workflows" | "pulse" | "projects";
+  onTitleClick?: () => void;
   overlaysContent?: boolean;
   secondaryNavigation?: React.ReactNode;
   statusBadge?: React.ReactNode;
+  titleActive?: boolean;
+  titleNavigation?: React.ReactNode;
   /** Render the chrome wrapper without an individual backdrop when a parent supplies shared blur. */
   transparentChrome?: boolean;
 };
@@ -95,9 +98,12 @@ export function ChatHeader({
   visibility,
   leadingContent,
   mode = "channel",
+  onTitleClick,
   overlaysContent = false,
   secondaryNavigation,
   statusBadge,
+  titleActive = true,
+  titleNavigation,
   transparentChrome = false,
 }: ChatHeaderProps) {
   const trimmedDescription = description?.trim() ?? "";
@@ -124,8 +130,18 @@ export function ChatHeader({
       data-tauri-drag-region
     >
       <div className="flex h-9 min-w-0 items-center gap-2.5">
-        <div className="min-w-0 flex-1">
-          <div className="group/title flex min-w-0 items-center gap-[4px] overflow-hidden">
+        <div
+          className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden"
+          {...(onTitleClick
+            ? { "aria-label": "Channel views", role: "tablist" }
+            : {})}
+        >
+          <div
+            className={cn(
+              "group/title flex min-w-0 items-center gap-[4px] overflow-hidden",
+              titleNavigation && "max-w-[min(60%,18rem)] shrink-0",
+            )}
+          >
             <div className="flex shrink-0 items-center">
               {leadingContent ?? (
                 <ChannelIcon
@@ -143,11 +159,30 @@ export function ChatHeader({
               data-testid="chat-title"
               title={trimmedDescription || undefined}
             >
-              {title}
+              {onTitleClick ? (
+                <button
+                  aria-selected={titleActive}
+                  className={cn(
+                    "max-w-full truncate rounded-sm outline-hidden transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
+                    !titleActive && "text-muted-foreground",
+                  )}
+                  data-testid="chat-title-tab"
+                  onClick={onTitleClick}
+                  role="tab"
+                  type="button"
+                >
+                  {title}
+                </button>
+              ) : (
+                title
+              )}
             </h1>
             <Button
               aria-label={`Copy channel name: ${title}`}
-              className="h-6 w-6 shrink-0 opacity-0 text-muted-foreground transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/title:opacity-100"
+              className={cn(
+                "h-6 w-6 shrink-0 opacity-0 text-muted-foreground transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/title:opacity-100",
+                titleNavigation && "max-md:hidden",
+              )}
               onClick={() => void handleCopyTitle()}
               size="icon-xs"
               title="Copy channel name"
@@ -162,6 +197,11 @@ export function ChatHeader({
               </div>
             ) : null}
           </div>
+          {titleNavigation ? (
+            <div className="min-w-0 flex-1 overflow-x-auto scrollbar-none">
+              {titleNavigation}
+            </div>
+          ) : null}
         </div>
 
         <div className="flex shrink-0 items-center gap-1">

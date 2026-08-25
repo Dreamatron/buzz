@@ -58,6 +58,7 @@ import type { ChannelPaneProps } from "@/features/channels/ui/ChannelPane.types"
 import * as agentSessionSelection from "@/features/channels/ui/agentSessionSelection";
 import { usePrepareDmSendChannel } from "@/features/channels/ui/usePrepareDmSendChannel";
 import { useChannelPaneMessages } from "@/features/channels/ui/useChannelPaneMessages";
+import { useChannelViewOverride } from "@/features/channels/ui/ChannelViewOverrideContext";
 import { useRoutedMessageEdit } from "@/features/channels/ui/useRoutedMessageEdit";
 import { Button } from "@/shared/ui/button";
 import { useRenderScopedReactionHydration } from "@/features/messages/lib/useRenderScopedReactionHydration";
@@ -176,6 +177,7 @@ export const ChannelPane = React.memo(function ChannelPane({
   threadFirstUnreadReplyId,
   typingPubkeys,
 }: ChannelPaneProps) {
+  const mainContent = useChannelViewOverride()?.mainContent;
   const timelineScrollRef = React.useRef<HTMLDivElement>(null);
   const messageTimelineRef = React.useRef<MessageTimelineHandle>(null);
   const composerWrapperRef = React.useRef<HTMLDivElement>(null);
@@ -203,8 +205,7 @@ export const ChannelPane = React.memo(function ChannelPane({
       channelPaneMountedRef.current = false;
     };
   }, []);
-  // Clear only the auto-send key so thread state survives deferred submission;
-  // older wrappers fall back to goChannel to prevent back-navigation replay.
+  // Clear only auto-send so thread state survives; older wrappers fall back to goChannel.
   const handleAutoSubmitComplete = React.useCallback(() => {
     if (onAutoSendComplete) {
       onAutoSendComplete();
@@ -610,7 +611,12 @@ export const ChannelPane = React.memo(function ChannelPane({
               <ThreadRepliesErrorCard onRetry={onRetryHuddleThreadReplies} />
             </div>
           ) : null}
-          <div className="relative isolate flex min-h-0 min-w-0 flex-1 flex-col">
+          <div
+            className={cn(
+              "relative isolate flex min-h-0 min-w-0 flex-1 flex-col",
+              mainContent && "hidden",
+            )}
+          >
             <MessageTimeline
               ref={messageTimelineRef}
               channelId={activeChannel?.id}
@@ -782,10 +788,7 @@ export const ChannelPane = React.memo(function ChannelPane({
                     }
                     showTopBorder={false}
                   />
-                  {/* The activity accessory is anchored in the dock's reserved
-                    bottom rail, so fading it cannot change the observed
-                    overlay height or move the conversation. Its natural
-                    content height remains responsive. */}
+                  {/* Reserved dock space keeps activity changes from moving the conversation. */}
                   <ChannelComposerActivityAccessory
                     agents={activityAgents}
                     channel={activeChannel}
@@ -804,6 +807,14 @@ export const ChannelPane = React.memo(function ChannelPane({
               <DropZoneOverlay className="z-50 rounded-2xl bg-primary/20 backdrop-blur-sm" />
             ) : null}
           </div>
+          {mainContent ? (
+            <div
+              className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden pt-(--buzz-channel-content-top-padding,5.75rem)"
+              data-testid="channel-main-content"
+            >
+              {mainContent}
+            </div>
+          ) : null}
         </section>
       ) : null}
       {/*

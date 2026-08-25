@@ -58,19 +58,20 @@ test("first channel feature quietly creates one backing project", async ({
 
   await page.getByTestId("auxiliary-panel-close").click();
   await expect(page.getByTestId("project-channel-home")).toBeVisible();
-  await expect(page.getByTestId("project-home-context-tasks")).toHaveCount(0);
-  await expect(page.getByTestId("project-home-context-reviews")).toBeVisible();
-  await expect(page.getByTestId("project-home-context-commits")).toBeVisible();
-  await expect(page.getByTestId("project-home-context-files")).toBeVisible();
-  await expect(page.getByTestId("project-home-context-people")).toBeVisible();
-  await expect(page.getByTestId("project-home-context-codebase")).toBeVisible();
-  await expect(page.getByTestId("project-home-context-channel")).toHaveCount(0);
+  await expect(page.getByTestId("project-channel-tab-tasks")).toHaveCount(0);
+  await expect(page.getByTestId("project-channel-tab-reviews")).toBeVisible();
+  await expect(page.getByTestId("project-channel-tab-commits")).toBeVisible();
+  await expect(page.getByTestId("project-channel-tab-files")).toBeVisible();
+  await expect(page.getByTestId("project-channel-tab-people")).toBeVisible();
+  await expect(page.getByTestId("project-channel-tab-codebase")).toBeVisible();
+  await expect(page.getByTestId("project-channel-tab-channels")).toHaveCount(0);
+  await expect(page.getByTestId("project-home-summary-rail")).toHaveCount(0);
 
   await page.getByTestId("channel-management-trigger").click();
   await page.getByTestId("channel-feature-tasks-switch").click();
   await page.getByTestId("auxiliary-panel-close").click();
-  await expect(page.getByTestId("project-home-context-tasks")).toBeVisible();
-  await expect(page.getByTestId("project-home-context-channel")).toHaveCount(0);
+  await expect(page.getByTestId("project-channel-tab-tasks")).toBeVisible();
+  await expect(page.getByTestId("project-channel-tab-channels")).toHaveCount(0);
 
   await page.getByTestId("channel-management-trigger").click();
   await page.getByTestId("channel-feature-breakouts-switch").click();
@@ -78,7 +79,7 @@ test("first channel feature quietly creates one backing project", async ({
     .poll(async () => (await acceptedProjectEvents(page)).length)
     .toBe(2);
   await page.getByTestId("auxiliary-panel-close").click();
-  await expect(page.getByTestId("project-home-context-channel")).toBeVisible();
+  await expect(page.getByTestId("project-channel-tab-channels")).toBeVisible();
 
   await page.getByTestId(`channel-${rootChannel.name}`).click();
   await page.getByTestId("channel-management-trigger").click();
@@ -93,9 +94,11 @@ test("first channel feature quietly creates one backing project", async ({
 
   await expect(page.getByTestId("project-channel-home")).toBeVisible();
   await expect(page.getByTestId("channel-project-feature-bar")).toHaveCount(0);
-  await page.getByTestId("project-home-context-tasks").click();
+  await page.getByTestId("project-channel-tab-tasks").click();
   const tasksWorkspace = page.getByTestId("project-home-workspace-sheet");
   await expect(tasksWorkspace).toHaveAttribute("data-tab", "issues");
+  await expect(page.getByTestId("channel-main-content")).toBeVisible();
+  await expect(page.getByTestId("channel-composer-overlay")).not.toBeVisible();
   await expect(
     tasksWorkspace.getByText("No tasks yet", { exact: true }),
   ).toBeVisible();
@@ -105,11 +108,14 @@ test("first channel feature quietly creates one backing project", async ({
   await expect(
     tasksWorkspace.getByTestId("project-issue-detail"),
   ).toContainText("POC task");
-  await page
-    .getByTestId("focus-thread-drawer")
-    .getByTestId("auxiliary-panel-close")
-    .click();
+  await page.getByTestId("chat-title-tab").click();
+  await expect(page.getByTestId("project-home-workspace-sheet")).toHaveCount(0);
+  await expect(page.getByTestId("channel-composer-overlay")).toBeVisible();
 
+  await page.getByTestId("project-channel-tab-channels").click();
+  await expect(
+    page.getByTestId("project-channel-content-channels"),
+  ).toBeVisible();
   await page.getByTestId("add-project-channel").click();
   await page.getByTestId("create-channel-name").fill("poc-breakout");
   await page.getByTestId("create-channel-submit").click();
@@ -117,14 +123,14 @@ test("first channel feature quietly creates one backing project", async ({
 
   await page.getByTestId(`channel-${rootChannel.name}`).click();
   await expect(page.getByTestId("project-channel-home")).toBeVisible();
+  await page.getByTestId("project-channel-tab-codebase").click();
   await expect(
-    page
-      .getByTestId("project-home-context-codebase")
-      .getByTestId("add-project-repository"),
+    page.getByTestId("project-channel-content-codebase"),
   ).toBeVisible();
+  await expect(page.getByTestId("add-project-repository")).toBeVisible();
   await page.setViewportSize({ height: 844, width: 390 });
   await expect(page.getByTestId("project-channel-home")).toBeVisible();
-  await page.getByTestId("project-home-context-tasks").click();
+  await page.getByTestId("project-channel-tab-tasks").click();
   const mobileTasksWorkspace = page.getByTestId("project-home-workspace-sheet");
   await expect(
     mobileTasksWorkspace.getByText("POC task", { exact: true }),
@@ -194,15 +200,13 @@ test("existing channel project data infers features without standalone Projects 
   await expect(page.getByTestId("channel-feature-tasks-switch")).toBeChecked();
   await expect(page.getByText("In use", { exact: true })).toBeVisible();
   await page.getByTestId("auxiliary-panel-close").click();
-  await expect(page.getByTestId("project-home-context-tasks")).toBeVisible();
-  await expect(page.getByTestId("project-home-context-reviews")).toHaveCount(0);
-  await expect(page.getByTestId("project-home-context-commits")).toHaveCount(0);
-  await expect(page.getByTestId("project-home-context-files")).toHaveCount(0);
-  await expect(page.getByTestId("project-home-context-people")).toHaveCount(0);
-  await expect(page.getByTestId("project-home-context-codebase")).toHaveCount(
-    0,
-  );
-  await expect(page.getByTestId("project-home-context-channel")).toHaveCount(0);
+  await expect(page.getByTestId("project-channel-tab-tasks")).toBeVisible();
+  await expect(page.getByTestId("project-channel-tab-reviews")).toHaveCount(0);
+  await expect(page.getByTestId("project-channel-tab-commits")).toHaveCount(0);
+  await expect(page.getByTestId("project-channel-tab-files")).toHaveCount(0);
+  await expect(page.getByTestId("project-channel-tab-people")).toHaveCount(0);
+  await expect(page.getByTestId("project-channel-tab-codebase")).toHaveCount(0);
+  await expect(page.getByTestId("project-channel-tab-channels")).toHaveCount(0);
 
   await page.getByTestId("channel-management-trigger").click();
   await page.getByTestId("channel-feature-repositories-switch").click();
@@ -235,7 +239,7 @@ test("existing channel project data infers features without standalone Projects 
   await page.getByTestId("auxiliary-panel-close").click();
   await expect(page.getByTestId("project-channel-home")).toBeVisible();
   await expect(page.getByTestId("channel-project-feature-bar")).toHaveCount(0);
-  await page.getByTestId("project-home-context-tasks").click();
+  await page.getByTestId("project-channel-tab-tasks").click();
   await expect(
     page
       .getByTestId("project-home-workspace-sheet")
