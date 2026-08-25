@@ -35,7 +35,10 @@ import {
   AppSidebarPrimaryMenu,
 } from "@/features/sidebar/ui/AppSidebarPinnedHeader";
 import { MoreUnreadButton } from "@/features/sidebar/ui/MoreUnreadButton";
-import { ProjectChannelGroup } from "@/features/sidebar/ui/ProjectChannelGroup";
+import {
+  ProjectChannelGroup,
+  listProjectChannelGroups,
+} from "@/features/sidebar/ui/ProjectChannelGroup";
 import { SidebarSection } from "@/features/sidebar/ui/SidebarSection";
 import {
   ChannelGroupSection,
@@ -342,6 +345,32 @@ export function AppSidebar({
     );
   }, [streamChannels, starredChannelIds, sortModeFor]);
 
+  const projectChannelGroups = listProjectChannelGroups({
+    channels: streamChannels,
+    destinations: projectMoveDestinations,
+    sectionChannels: sectionBuckets.bySection,
+  });
+  const projectSectionIds = new Set(
+    projectChannelGroups.map((group) => group.sectionId),
+  );
+  const visibleChannelSections = channelSections.filter(
+    (section) => !projectSectionIds.has(section.id),
+  );
+  const projectGroupByHomeChannelId = new Map(
+    projectChannelGroups.map((group) => [group.homeChannel.id, group]),
+  );
+  const channelsListItems = sortChannelsForSidebar(
+    [
+      ...new Map(
+        [
+          ...sectionBuckets.unassigned,
+          ...projectChannelGroups.map((group) => group.homeChannel),
+        ].map((channel) => [channel.id, channel]),
+      ).values(),
+    ],
+    sortModeFor("channels"),
+  );
+
   const handleCreateSectionForChannel = React.useCallback(
     (channelId: string) => {
       setCreateSectionState({ open: true, pendingChannelId: channelId });
@@ -574,61 +603,10 @@ export function AppSidebar({
                     onUnassignChannel={unassignChannel}
                     onReorderSections={reorderSections}
                   >
-                    {channelSections.map((section, idx) => {
+                    {visibleChannelSections.map((section, idx) => {
                       const sectionChannels =
                         sectionBuckets.bySection[section.id] ?? [];
-                      const projectDestination = projectMoveDestinations.find(
-                        (destination) => destination.sectionId === section.id,
-                      );
-                      const projectHomeChannel = projectDestination
-                        ? streamChannels.find(
-                            (channel) =>
-                              channel.id ===
-                              projectDestination.projectChannelId,
-                          )
-                        : undefined;
-                      return projectDestination && projectHomeChannel ? (
-                        <ProjectChannelGroup
-                          activeWorkingByChannelId={activeWorkingByChannelId}
-                          assignments={channelAssignments}
-                          channels={[
-                            projectHomeChannel,
-                            ...sectionChannels.filter(
-                              (channel) => channel.id !== projectHomeChannel.id,
-                            ),
-                          ]}
-                          destination={projectDestination}
-                          isActiveChannel={selectedView === "channel"}
-                          isExpanded={!(collapsedSections[section.id] ?? false)}
-                          key={section.id}
-                          mutedChannelIds={mutedChannelIds}
-                          onAssignChannel={assignChannel}
-                          onAssignChannelToProject={assignChannelToProject}
-                          onCreateSectionForChannel={
-                            handleCreateSectionForChannel
-                          }
-                          onDeleteChannel={requestDeleteChannel}
-                          onLeaveChannel={requestLeaveChannel}
-                          onMarkChannelRead={onMarkChannelRead}
-                          onMarkChannelUnread={onMarkChannelUnread}
-                          onMuteChannel={onMuteChannel}
-                          onSelectChannel={onSelectChannel}
-                          onStarChannel={onStarChannel}
-                          onToggleExpanded={() =>
-                            toggleCollapsedSection(section.id)
-                          }
-                          onUnassignChannel={unassignChannel}
-                          onUnmuteChannel={onUnmuteChannel}
-                          onUnstarChannel={onUnstarChannel}
-                          projectDestinations={projectMoveDestinations}
-                          sectionId={section.id}
-                          sections={channelSections}
-                          selectedChannelId={selectedChannelId}
-                          starredChannelIds={starredChannelIds}
-                          unreadChannelCounts={unreadChannelCounts}
-                          unreadChannelIds={unreadChannelIds}
-                        />
-                      ) : (
+                      return (
                         <CustomChannelSection
                           key={section.id}
                           section={section}
@@ -648,7 +626,7 @@ export function AppSidebar({
                           projectDestinations={projectMoveDestinations}
                           assignments={channelAssignments}
                           isFirst={idx === 0}
-                          isLast={idx === channelSections.length - 1}
+                          isLast={idx === visibleChannelSections.length - 1}
                           sortMode={sortModeFor(
                             sectionSortGroupKey(section.id),
                           )}
@@ -708,7 +686,7 @@ export function AppSidebar({
                       isCollapsed={collapsedGroups.channels}
                       isActiveChannel={selectedView === "channel"}
                       activeWorkingByChannelId={activeWorkingByChannelId}
-                      items={sectionBuckets.unassigned}
+                      items={channelsListItems}
                       sortMode={sortModeFor("channels")}
                       onSortModeChange={(mode) =>
                         setSortModeFor("channels", mode)
@@ -721,6 +699,50 @@ export function AppSidebar({
                       onMarkAllRead={onMarkAllChannelsRead}
                       onMarkChannelRead={onMarkChannelRead}
                       onMarkChannelUnread={onMarkChannelUnread}
+                      renderChannel={(channel) => {
+                        const group = projectGroupByHomeChannelId.get(
+                          channel.id,
+                        );
+                        return group ? (
+                          <ProjectChannelGroup
+                            activeWorkingByChannelId={activeWorkingByChannelId}
+                            assignments={channelAssignments}
+                            channels={group.channels}
+                            destination={group.destination}
+                            isActiveChannel={selectedView === "channel"}
+                            isExpanded={
+                              !(collapsedSections[group.sectionId] ?? false)
+                            }
+                            key={group.sectionId}
+                            mutedChannelIds={mutedChannelIds}
+                            onAssignChannel={assignChannel}
+                            onAssignChannelToProject={assignChannelToProject}
+                            onCreateSectionForChannel={
+                              handleCreateSectionForChannel
+                            }
+                            onDeleteChannel={requestDeleteChannel}
+                            onLeaveChannel={requestLeaveChannel}
+                            onMarkChannelRead={onMarkChannelRead}
+                            onMarkChannelUnread={onMarkChannelUnread}
+                            onMuteChannel={onMuteChannel}
+                            onSelectChannel={onSelectChannel}
+                            onStarChannel={onStarChannel}
+                            onToggleExpanded={() =>
+                              toggleCollapsedSection(group.sectionId)
+                            }
+                            onUnassignChannel={unassignChannel}
+                            onUnmuteChannel={onUnmuteChannel}
+                            onUnstarChannel={onUnstarChannel}
+                            projectDestinations={projectMoveDestinations}
+                            sectionId={group.sectionId}
+                            sections={channelSections}
+                            selectedChannelId={selectedChannelId}
+                            starredChannelIds={starredChannelIds}
+                            unreadChannelCounts={unreadChannelCounts}
+                            unreadChannelIds={unreadChannelIds}
+                          />
+                        ) : undefined;
+                      }}
                       onSelectChannel={onSelectChannel}
                       onToggleCollapsed={() => toggleCollapsedGroup("channels")}
                       selectedChannelId={selectedChannelId}

@@ -227,9 +227,30 @@ test("existing channel project data infers features without standalone Projects 
 
   const projectGroup = page.getByTestId("project-channel-group-general");
   const projectDisclosure = page.getByTestId("project-channel-expand-general");
+  const channelsList = page.getByTestId("stream-list");
   await expect(
-    projectGroup.locator("[data-sidebar-section-title]"),
-  ).toHaveCount(0);
+    projectGroup
+      .locator('xpath=ancestor::*[@data-sidebar="group"][1]')
+      .locator("[data-sidebar-section-title]"),
+  ).toHaveText("Channels");
+  await expect(
+    channelsList.getByTestId("project-channel-group-general"),
+  ).toBeVisible();
+  await expect(
+    projectGroup
+      .locator("xpath=following-sibling::*[1]")
+      .getByTestId("channel-random"),
+  ).toBeVisible();
+  await expect(
+    projectGroup
+      .locator("xpath=preceding-sibling::*[1]")
+      .getByTestId("channel-engineering"),
+  ).toBeVisible();
+  await expect(
+    projectGroup
+      .locator("xpath=following-sibling::*[2]")
+      .getByTestId("channel-secret-projects"),
+  ).toBeVisible();
   await expect(
     page.getByTestId("channel-general").getByTestId("project-channel-icon"),
   ).toHaveCount(0);

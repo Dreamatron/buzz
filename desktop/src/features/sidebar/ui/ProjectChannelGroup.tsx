@@ -17,11 +17,7 @@ import {
   ContextMenuContent,
   ContextMenuTrigger,
 } from "@/shared/ui/context-menu";
-import {
-  SidebarGroup,
-  SidebarMenu,
-  SidebarMenuItem,
-} from "@/shared/ui/sidebar";
+import { SidebarMenuItem } from "@/shared/ui/sidebar";
 
 type ProjectChannelGroupProps = {
   activeWorkingByChannelId?: ReadonlyMap<string, ActiveChannelTurnSummary>;
@@ -57,6 +53,44 @@ type ProjectChannelGroupProps = {
   onUnstarChannel?: (channelId: string) => void;
 };
 
+export type ProjectChannelGroupModel = {
+  channels: Channel[];
+  destination: ProjectMoveDestination;
+  homeChannel: Channel;
+  sectionId: string;
+};
+
+export function listProjectChannelGroups({
+  channels,
+  destinations,
+  sectionChannels,
+}: {
+  channels: Channel[];
+  destinations: ProjectMoveDestination[];
+  sectionChannels: Record<string, Channel[]>;
+}): ProjectChannelGroupModel[] {
+  return destinations.flatMap((destination) => {
+    if (!destination.sectionId) return [];
+    const homeChannel = channels.find(
+      (channel) => channel.id === destination.projectChannelId,
+    );
+    if (!homeChannel) return [];
+    return [
+      {
+        channels: [
+          homeChannel,
+          ...(sectionChannels[destination.sectionId] ?? []).filter(
+            (channel) => channel.id !== homeChannel.id,
+          ),
+        ],
+        destination,
+        homeChannel,
+        sectionId: destination.sectionId,
+      },
+    ];
+  });
+}
+
 export function ProjectChannelGroup(props: ProjectChannelGroupProps) {
   const homeChannel = props.channels.find(
     (channel) => channel.id === props.destination.projectChannelId,
@@ -69,68 +103,58 @@ export function ProjectChannelGroup(props: ProjectChannelGroupProps) {
   const hasChildren = childChannels.length > 0;
   const isHomeActive =
     props.isActiveChannel && props.selectedChannelId === homeChannel.id;
-  const childrenId = `project-channel-children-${homeChannel.id}`;
-
   return (
-    <DroppableSectionBody sectionId={props.sectionId}>
-      <SidebarGroup
-        className="select-none py-0"
-        data-testid={`project-channel-group-${homeChannel.name}`}
+    <>
+      <ProjectChannelRow
+        allowMove={false}
+        channel={homeChannel}
+        dropSectionId={props.sectionId}
+        hideIcon={hasChildren}
+        testId={`project-channel-group-${homeChannel.name}`}
+        {...props}
       >
-        <SidebarMenu>
-          <ProjectChannelRow
-            allowMove={false}
-            channel={homeChannel}
-            hideIcon={hasChildren}
-            {...props}
+        {hasChildren ? (
+          <button
+            aria-expanded={props.isExpanded}
+            aria-label={
+              props.isExpanded
+                ? `Hide channels in ${homeChannel.name}`
+                : `Show channels in ${homeChannel.name}`
+            }
+            className={cn(
+              "absolute left-1 top-1/2 z-10 flex size-6 -translate-y-1/2 items-center justify-center rounded-md outline-hidden ring-sidebar-ring transition-colors hover:bg-sidebar-accent focus-visible:ring-2",
+              isHomeActive
+                ? "text-sidebar-active-foreground/75 hover:text-sidebar-active-foreground"
+                : "text-sidebar-foreground/70 hover:text-sidebar-foreground",
+            )}
+            data-testid={`project-channel-expand-${homeChannel.name}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              props.onToggleExpanded();
+            }}
+            type="button"
           >
-            {hasChildren ? (
-              <button
-                aria-controls={childrenId}
-                aria-expanded={props.isExpanded}
-                aria-label={
-                  props.isExpanded
-                    ? `Hide channels in ${homeChannel.name}`
-                    : `Show channels in ${homeChannel.name}`
-                }
-                className={cn(
-                  "absolute left-1 top-1/2 z-10 flex size-6 -translate-y-1/2 items-center justify-center rounded-md outline-hidden ring-sidebar-ring transition-colors hover:bg-sidebar-accent focus-visible:ring-2",
-                  isHomeActive
-                    ? "text-sidebar-active-foreground/75 hover:text-sidebar-active-foreground"
-                    : "text-sidebar-foreground/70 hover:text-sidebar-foreground",
-                )}
-                data-testid={`project-channel-expand-${homeChannel.name}`}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  props.onToggleExpanded();
-                }}
-                type="button"
-              >
-                <ChevronRight
-                  className={cn(
-                    "size-4 transition-transform duration-150",
-                    props.isExpanded && "rotate-90",
-                  )}
-                />
-              </button>
-            ) : null}
-          </ProjectChannelRow>
-        </SidebarMenu>
-        {hasChildren && props.isExpanded ? (
-          <SidebarMenu id={childrenId}>
-            {childChannels.map((channel) => (
-              <ProjectChannelRow
-                channel={channel}
-                draggable
-                key={channel.id}
-                nested
-                {...props}
-              />
-            ))}
-          </SidebarMenu>
+            <ChevronRight
+              className={cn(
+                "size-4 transition-transform duration-150",
+                props.isExpanded && "rotate-90",
+              )}
+            />
+          </button>
         ) : null}
-      </SidebarGroup>
-    </DroppableSectionBody>
+      </ProjectChannelRow>
+      {hasChildren && props.isExpanded
+        ? childChannels.map((channel) => (
+            <ProjectChannelRow
+              channel={channel}
+              draggable
+              key={channel.id}
+              nested
+              {...props}
+            />
+          ))
+        : null}
+    </>
   );
 }
 
@@ -139,16 +163,20 @@ function ProjectChannelRow({
   channel,
   children,
   draggable = false,
+  dropSectionId,
   hideIcon = false,
   nested = false,
+  testId,
   ...props
 }: ProjectChannelGroupProps & {
   allowMove?: boolean;
   channel: Channel;
   children?: ReactNode;
   draggable?: boolean;
+  dropSectionId?: string;
   hideIcon?: boolean;
   nested?: boolean;
+  testId?: string;
 }) {
   const button = (
     <ChannelMenuButton
@@ -163,19 +191,30 @@ function ProjectChannelRow({
       unreadCount={props.unreadChannelCounts.get(channel.id) ?? 0}
     />
   );
+  const content = (
+    <>
+      {draggable ? (
+        <DraggableChannelRow channelId={channel.id}>
+          {button}
+        </DraggableChannelRow>
+      ) : (
+        button
+      )}
+      {children}
+    </>
+  );
 
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
-        <SidebarMenuItem>
-          {draggable ? (
-            <DraggableChannelRow channelId={channel.id}>
-              {button}
-            </DraggableChannelRow>
+        <SidebarMenuItem data-testid={testId}>
+          {dropSectionId ? (
+            <DroppableSectionBody sectionId={dropSectionId}>
+              {content}
+            </DroppableSectionBody>
           ) : (
-            button
+            content
           )}
-          {children}
         </SidebarMenuItem>
       </ContextMenuTrigger>
       <ContextMenuContent>
