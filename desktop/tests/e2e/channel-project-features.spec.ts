@@ -256,7 +256,7 @@ test("existing channel project data infers features without standalone Projects 
   await openGeneralChannelSettings(page);
 
   await expect(page.getByTestId("channel-feature-tasks-switch")).toBeChecked();
-  await expect(page.getByText("In use", { exact: true })).toBeVisible();
+  await expect(page.getByText("In use", { exact: true })).toHaveCount(0);
   await page.getByTestId("auxiliary-panel-close").click();
   await expect(page.getByTestId("project-channel-tab-tasks")).toBeVisible();
   await expect(page.getByTestId("project-channel-tab-reviews")).toHaveCount(0);

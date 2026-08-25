@@ -107,9 +107,6 @@ export function ChannelProjectFeaturesSettings({
             >
               {label}
             </span>
-            {forcedOn ? (
-              <span className="text-xs text-muted-foreground">In use</span>
-            ) : null}
             <Switch
               aria-labelledby={labelId}
               checked={context.enabled[feature]}
