@@ -3356,11 +3356,7 @@ async fn tokio_main() -> Result<()> {
                 );
                 if let Ok(pool::SteerAck::Success { session_id }) = &ack {
                     queue.extend_in_flight_deadline(&scope, config.max_turn_duration_secs);
-                    if !pool.record_successful_steer(
-                        channel_id,
-                        event_id.clone(),
-                        session_id.clone(),
-                    ) {
+                    if !pool.record_successful_steer(&scope, event_id.clone(), session_id.clone()) {
                         tracing::warn!(
                             channel = %channel_id,
                             event_id = %event_id,
@@ -3700,7 +3696,7 @@ fn try_native_steer(
         ack_tx,
     };
 
-    match pool.send_steer(channel_id, request) {
+    match pool.send_steer(&scope, request) {
         Ok(()) => {
             // Withhold the queued event synchronously BEFORE spawning
             // the watcher: this closes the race where `mark_complete`
@@ -3764,23 +3760,27 @@ fn dispatch_pending(
             None => break,
         };
         let channel_id = batch.channel_id;
+        let scope = batch.scope.clone();
         let typing_scope = batch
             .events
             .last()
             .map(|event| queue::parse_thread_tags(&event.event))
             .unwrap_or_default();
-        let affinity_hit = pool.has_session_for(channel_id);
-        let mut agent = match pool.try_claim(Some(channel_id)) {
+        // Scope-level affinity: reuse the worker that already holds THIS
+        // thread's provider session so a temporarily busy worker cannot cause
+        // another to open a duplicate session for the same thread.
+        let affinity_hit = pool.has_session_for(&scope);
+        let mut agent = match pool.try_claim(Some(&scope)) {
             Some(a) => a,
             None => {
                 let pending = queue.pending_channels();
                 tracing::debug!(pending_channels = pending, "pool_exhausted");
                 queue.requeue_preserve_timestamps(batch);
-                queue.mark_complete(channel_id);
+                queue.mark_complete(&scope);
                 break;
             }
         };
-        tracing::debug!(agent = agent.index, channel = %channel_id, affinity_hit, "agent_claimed");
+        tracing::debug!(agent = agent.index, channel = %channel_id, scope = %scope.telemetry_label(), affinity_hit, "agent_claimed");
 
         let recoverable_batch = match ctx.dedup_mode {
             DedupMode::Queue => Some(batch.clone()),
@@ -3828,6 +3828,7 @@ fn dispatch_pending(
             pool::TaskMeta {
                 agent_index,
                 channel_id: Some(channel_id),
+                scope: Some(scope),
                 turn_id,
                 recoverable_batch,
                 control_tx: Some(control_tx),
@@ -3923,19 +3924,20 @@ fn handle_prompt_result(
     pool.task_map_mut()
         .retain(|_, meta| meta.agent_index != agent_index);
     debug_assert_eq!(before, pool.task_map().len() + 1);
-    if let Some(channel_id) = result.source.channel_id() {
+    if let PromptSource::Channel(scope) = &result.source {
         // The task may have invalidated this session before returning. Never
         // resurrect delivery state for a dead session; its replacement must
         // receive fresh standing context and history.
-        if let Some(live_session_id) = result.agent.state.sessions.get(&channel_id).cloned() {
+        if let Some(live_session_id) = result.agent.state.sessions.get(scope).cloned() {
             let event_ids = successful_steer_deliveries
                 .into_iter()
                 .filter(|delivery| delivery.session_id == live_session_id)
                 .map(|delivery| delivery.event_id);
+            let scope = scope.clone();
             result
                 .agent
                 .state
-                .mark_channel_delivery_success(channel_id, false, event_ids);
+                .mark_scope_delivery_success(scope, false, event_ids);
         }
     }
 
@@ -4461,6 +4463,7 @@ fn dispatch_heartbeat(
         pool::TaskMeta {
             agent_index,
             channel_id: None,
+            scope: None,
             turn_id,
             recoverable_batch: None,
             control_tx: None,
@@ -5257,6 +5260,7 @@ mod owner_control_command_tests {
             pool::TaskMeta {
                 agent_index: 0,
                 channel_id: Some(channel_id),
+                scope: Some(scope::SessionScope::Conversation { channel_id }),
                 turn_id: "test-turn-id".to_string(),
                 recoverable_batch: None,
                 control_tx: Some(control_tx),
@@ -7102,14 +7106,14 @@ mod error_outcome_emission_tests {
         let channel_id = Uuid::new_v4();
         let steer_event_id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         let mut agent = dummy_agent(0).await;
-        agent
-            .state
-            .sessions
-            .insert(channel_id, "live-session".into());
-        agent
-            .state
-            .deliveries
-            .insert(channel_id, Default::default());
+        agent.state.sessions.insert(
+            scope::SessionScope::Conversation { channel_id },
+            "live-session".into(),
+        );
+        agent.state.deliveries.insert(
+            scope::SessionScope::Conversation { channel_id },
+            Default::default(),
+        );
 
         let mut pool = AgentPool::from_slots(vec![None]);
         let task_id = pool.join_set.spawn(async {}).id();
@@ -7118,6 +7122,7 @@ mod error_outcome_emission_tests {
             crate::pool::TaskMeta {
                 agent_index: 0,
                 channel_id: Some(channel_id),
+                scope: Some(scope::SessionScope::Conversation { channel_id }),
                 turn_id: "test-turn-id".into(),
                 recoverable_batch: None,
                 control_tx: None,
@@ -7165,23 +7170,25 @@ mod error_outcome_emission_tests {
         );
 
         let returned = pool.agents_mut()[0].as_ref().expect("returned agent");
-        assert!(returned.state.deliveries[&channel_id]
-            .delivered_event_ids
-            .contains(steer_event_id));
+        assert!(
+            returned.state.deliveries[&scope::SessionScope::Conversation { channel_id }]
+                .delivered_event_ids
+                .contains(steer_event_id)
+        );
     }
 
     #[tokio::test]
     async fn in_flight_stale_native_steer_ack_cannot_update_replacement_session() {
         let channel_id = Uuid::new_v4();
         let mut agent = dummy_agent(0).await;
-        agent
-            .state
-            .sessions
-            .insert(channel_id, "replacement-session".into());
-        agent
-            .state
-            .deliveries
-            .insert(channel_id, Default::default());
+        agent.state.sessions.insert(
+            scope::SessionScope::Conversation { channel_id },
+            "replacement-session".into(),
+        );
+        agent.state.deliveries.insert(
+            scope::SessionScope::Conversation { channel_id },
+            Default::default(),
+        );
 
         let mut pool = AgentPool::from_slots(vec![None]);
         let task_id = pool.join_set.spawn(async {}).id();
@@ -7190,6 +7197,7 @@ mod error_outcome_emission_tests {
             crate::pool::TaskMeta {
                 agent_index: 0,
                 channel_id: Some(channel_id),
+                scope: Some(scope::SessionScope::Conversation { channel_id }),
                 turn_id: "test-turn-id".into(),
                 recoverable_batch: None,
                 control_tx: None,
@@ -7237,9 +7245,11 @@ mod error_outcome_emission_tests {
         );
 
         let returned = pool.agents_mut()[0].as_ref().expect("returned agent");
-        assert!(returned.state.deliveries[&channel_id]
-            .delivered_event_ids
-            .is_empty());
+        assert!(
+            returned.state.deliveries[&scope::SessionScope::Conversation { channel_id }]
+                .delivered_event_ids
+                .is_empty()
+        );
     }
 
     #[tokio::test]
@@ -7247,50 +7257,54 @@ mod error_outcome_emission_tests {
         let channel_id = Uuid::new_v4();
         let steer_event_id = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
         let mut agent = dummy_agent(0).await;
-        agent
-            .state
-            .sessions
-            .insert(channel_id, "live-session".into());
-        agent
-            .state
-            .deliveries
-            .insert(channel_id, Default::default());
+        agent.state.sessions.insert(
+            scope::SessionScope::Conversation { channel_id },
+            "live-session".into(),
+        );
+        agent.state.deliveries.insert(
+            scope::SessionScope::Conversation { channel_id },
+            Default::default(),
+        );
         let mut pool = AgentPool::from_slots(vec![Some(agent)]);
 
         assert!(pool.record_successful_steer(
-            channel_id,
+            &scope::SessionScope::Conversation { channel_id },
             steer_event_id.into(),
             "live-session".into(),
         ));
         let returned = pool.agents_mut()[0].as_ref().expect("idle returned agent");
-        assert!(returned.state.deliveries[&channel_id]
-            .delivered_event_ids
-            .contains(steer_event_id));
+        assert!(
+            returned.state.deliveries[&scope::SessionScope::Conversation { channel_id }]
+                .delivered_event_ids
+                .contains(steer_event_id)
+        );
     }
 
     #[tokio::test]
     async fn late_native_steer_ack_cannot_update_replacement_session() {
         let channel_id = Uuid::new_v4();
         let mut agent = dummy_agent(0).await;
-        agent
-            .state
-            .sessions
-            .insert(channel_id, "replacement-session".into());
-        agent
-            .state
-            .deliveries
-            .insert(channel_id, Default::default());
+        agent.state.sessions.insert(
+            scope::SessionScope::Conversation { channel_id },
+            "replacement-session".into(),
+        );
+        agent.state.deliveries.insert(
+            scope::SessionScope::Conversation { channel_id },
+            Default::default(),
+        );
         let mut pool = AgentPool::from_slots(vec![Some(agent)]);
 
         assert!(!pool.record_successful_steer(
-            channel_id,
+            &scope::SessionScope::Conversation { channel_id },
             "stale-event".into(),
             "old-session".into(),
         ));
         let returned = pool.agents_mut()[0].as_ref().expect("replacement agent");
-        assert!(returned.state.deliveries[&channel_id]
-            .delivered_event_ids
-            .is_empty());
+        assert!(
+            returned.state.deliveries[&scope::SessionScope::Conversation { channel_id }]
+                .delivered_event_ids
+                .is_empty()
+        );
     }
 
     #[tokio::test]
@@ -7305,6 +7319,7 @@ mod error_outcome_emission_tests {
             crate::pool::TaskMeta {
                 agent_index: 0,
                 channel_id: Some(channel_id),
+                scope: Some(scope::SessionScope::Conversation { channel_id }),
                 turn_id: "test-turn-id".into(),
                 recoverable_batch: None,
                 control_tx: None,
@@ -7351,7 +7366,10 @@ mod error_outcome_emission_tests {
         );
 
         let returned = pool.agents_mut()[0].as_ref().expect("returned agent");
-        assert!(!returned.state.deliveries.contains_key(&channel_id));
+        assert!(!returned
+            .state
+            .deliveries
+            .contains_key(&scope::SessionScope::Conversation { channel_id }));
     }
 
     /// Drive one error outcome through `handle_prompt_result` and return how
@@ -7370,6 +7388,7 @@ mod error_outcome_emission_tests {
             crate::pool::TaskMeta {
                 agent_index: 0,
                 channel_id: None,
+                scope: None,
                 turn_id: "test-turn-id".to_string(),
                 recoverable_batch: None,
                 control_tx: None,
@@ -7449,6 +7468,7 @@ mod error_outcome_emission_tests {
             crate::pool::TaskMeta {
                 agent_index: 0,
                 channel_id: Some(channel_id),
+                scope: Some(scope::SessionScope::Conversation { channel_id }),
                 turn_id: "panic-turn-id".to_string(),
                 recoverable_batch: None,
                 control_tx: None,
@@ -7542,6 +7562,7 @@ mod error_outcome_emission_tests {
                 crate::pool::TaskMeta {
                     agent_index: 0,
                     channel_id: None,
+                    scope: None,
                     turn_id: "test-turn-id".to_string(),
                     recoverable_batch: None,
                     control_tx: None,
@@ -7638,6 +7659,7 @@ mod error_outcome_emission_tests {
                 crate::pool::TaskMeta {
                     agent_index: 0,
                     channel_id: None,
+                    scope: None,
                     turn_id: "test-turn-id".to_string(),
                     recoverable_batch: None,
                     control_tx: None,
@@ -7745,6 +7767,7 @@ mod error_outcome_emission_tests {
                 crate::pool::TaskMeta {
                     agent_index: 0,
                     channel_id: None,
+                    scope: None,
                     turn_id: "test-turn-id".to_string(),
                     recoverable_batch: None,
                     control_tx: None,
@@ -7822,6 +7845,7 @@ mod error_outcome_emission_tests {
             crate::pool::TaskMeta {
                 agent_index: 0,
                 channel_id: None,
+                scope: None,
                 turn_id: "test-turn-id".to_string(),
                 recoverable_batch: None,
                 control_tx: None,
@@ -7918,6 +7942,7 @@ mod error_outcome_emission_tests {
             crate::pool::TaskMeta {
                 agent_index: 0,
                 channel_id: None,
+                scope: None,
                 turn_id: "test-turn-id".to_string(),
                 recoverable_batch: None,
                 control_tx: None,
@@ -8037,6 +8062,7 @@ mod error_outcome_emission_tests {
             crate::pool::TaskMeta {
                 agent_index: 0,
                 channel_id: None,
+                scope: None,
                 turn_id: "test-turn-id".to_string(),
                 recoverable_batch: None,
                 control_tx: None,
@@ -8178,6 +8204,7 @@ mod error_outcome_emission_tests {
             crate::pool::TaskMeta {
                 agent_index: 0,
                 channel_id: None,
+                scope: None,
                 turn_id: "test-turn-id".to_string(),
                 recoverable_batch: None,
                 control_tx: None,
@@ -8370,6 +8397,7 @@ mod error_outcome_emission_tests {
             crate::pool::TaskMeta {
                 agent_index: 0,
                 channel_id: None,
+                scope: None,
                 turn_id: "test-turn-id".to_string(),
                 recoverable_batch: None,
                 control_tx: None,
@@ -8457,6 +8485,7 @@ mod error_outcome_emission_tests {
             crate::pool::TaskMeta {
                 agent_index: 0,
                 channel_id: None,
+                scope: None,
                 turn_id: "test-turn-id".to_string(),
                 recoverable_batch: None,
                 control_tx: None,
