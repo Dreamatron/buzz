@@ -4,6 +4,7 @@ import { installMockBridge, openCreateChannelDialog } from "../helpers/bridge";
 
 const GENERAL_CHANNEL_ID = "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50";
 const OWNER = "deadbeef".repeat(8);
+const COLLABORATOR_OWNER = "cafe".repeat(16);
 
 async function openGeneralChannelSettings(page: Page) {
   await page.getByTestId("channel-general").click();
@@ -113,7 +114,8 @@ test("existing channel project data infers features without standalone Projects 
   page,
 }) => {
   const dtag = "general-root";
-  const repositoryAddress = `30617:${OWNER}:${dtag}`;
+  const repositoryAddress = `30617:${COLLABORATOR_OWNER}:${dtag}`;
+  const projectAddress = `30621:${COLLABORATOR_OWNER}:${dtag}`;
   await page.addInitScript(
     ({ channelId, owner, repoAddress, projectDtag }) => {
       const createdAt = Math.floor(Date.now() / 1_000) - 30;
@@ -159,7 +161,7 @@ test("existing channel project data infers features without standalone Projects 
     },
     {
       channelId: GENERAL_CHANNEL_ID,
-      owner: OWNER,
+      owner: COLLABORATOR_OWNER,
       repoAddress: repositoryAddress,
       projectDtag: dtag,
     },
@@ -178,6 +180,27 @@ test("existing channel project data infers features without standalone Projects 
   await expect(page.getByTestId("sidebar-projects-section")).toHaveCount(0);
 
   await page.getByTestId("auxiliary-panel-close").click();
+  await page.getByTestId("channel-random").click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Move to section" }).hover();
+  const projectDestination = page.getByTestId(
+    `move-channel-to-project-${projectAddress}`,
+  );
+  await expect(projectDestination).toHaveText("general");
+  await projectDestination.click();
+
+  const projectSection = page
+    .getByTestId("channel-random")
+    .locator('xpath=ancestor::*[@data-sidebar="group"][1]');
+  await expect(
+    projectSection.locator("[data-sidebar-section-title]"),
+  ).toHaveText("general");
+  await page.getByTestId("channel-general").click();
+  await page.getByTestId("channel-management-trigger").click();
+  await expect(
+    page.getByTestId("channel-feature-breakouts-switch"),
+  ).toBeChecked();
+  await page.getByTestId("auxiliary-panel-close").click();
+
   await page.getByTestId("open-settings").click();
   await page.getByTestId("profile-popover-settings").click();
   await page.getByTestId("settings-nav-experimental").click();

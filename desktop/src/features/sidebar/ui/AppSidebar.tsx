@@ -18,6 +18,7 @@ import {
   sortChannelsForSidebar,
 } from "@/features/sidebar/lib/channelSortPreference";
 import { useChannelSortPreference } from "@/features/sidebar/lib/useChannelSortPreference";
+import { useProjectMoveDestinations } from "@/features/sidebar/lib/useProjectMoveDestinations";
 import { useSidebarScrollLock } from "@/features/sidebar/lib/useSidebarScrollLock";
 import { isSidebarBackgroundTarget } from "@/features/sidebar/lib/sidebarBackgroundTarget";
 import { useSidebarActivityOverflow } from "@/features/sidebar/lib/useSidebarActivityOverflow";
@@ -254,6 +255,15 @@ export function AppSidebar({
     assignChannel,
     unassignChannel,
   } = useChannelSections(currentPubkey, activeCommunity?.relayUrl);
+  const { assignChannelToProject, destinations: projectMoveDestinations } =
+    useProjectMoveDestinations({
+      assignChannel,
+      channels,
+      createSection,
+      currentPubkey,
+      relayUrl: activeCommunity?.relayUrl,
+      sections: channelSections,
+    });
 
   const sectionIds = React.useMemo(
     () => channelSections.map((s) => s.id),
@@ -580,6 +590,7 @@ export function AppSidebar({
                         unreadChannelCounts={unreadChannelCounts}
                         unreadChannelIds={unreadChannelIds}
                         sections={channelSections}
+                        projectDestinations={projectMoveDestinations}
                         assignments={channelAssignments}
                         isFirst={idx === 0}
                         isLast={idx === channelSections.length - 1}
@@ -604,6 +615,7 @@ export function AppSidebar({
                           }
                         }}
                         onAssignChannel={assignChannel}
+                        onAssignChannelToProject={assignChannelToProject}
                         onUnassignChannel={unassignChannel}
                         onCreateSectionForChannel={
                           handleCreateSectionForChannel
@@ -651,8 +663,10 @@ export function AppSidebar({
                       unreadChannelCounts={unreadChannelCounts}
                       unreadChannelIds={unreadChannelIds}
                       sections={channelSections}
+                      projectDestinations={projectMoveDestinations}
                       assignments={channelAssignments}
                       onAssignChannel={assignChannel}
+                      onAssignChannelToProject={assignChannelToProject}
                       onUnassignChannel={unassignChannel}
                       onCreateSectionForChannel={handleCreateSectionForChannel}
                       mutedChannelIds={mutedChannelIds}
