@@ -225,12 +225,25 @@ test("existing channel project data infers features without standalone Projects 
   await expect(projectDestination).toHaveText("general");
   await projectDestination.click();
 
-  const projectSection = page
-    .getByTestId("channel-random")
-    .locator('xpath=ancestor::*[@data-sidebar="group"][1]');
+  const projectGroup = page.getByTestId("project-channel-group-general");
+  const projectDisclosure = page.getByTestId("project-channel-expand-general");
   await expect(
-    projectSection.locator("[data-sidebar-section-title]"),
-  ).toHaveText("general");
+    projectGroup.locator("[data-sidebar-section-title]"),
+  ).toHaveCount(0);
+  await expect(
+    page.getByTestId("channel-general").getByTestId("project-channel-icon"),
+  ).toHaveCount(0);
+  await page.getByTestId("channel-general").click({ button: "right" });
+  await expect(
+    page.getByRole("menuitem", { name: "Move to section" }),
+  ).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(projectDisclosure).toHaveAttribute("aria-expanded", "true");
+  await projectDisclosure.click();
+  await expect(page.getByTestId("channel-random")).toBeHidden();
+  await expect(projectDisclosure).toHaveAttribute("aria-expanded", "false");
+  await projectDisclosure.click();
+  await expect(page.getByTestId("channel-random")).toBeVisible();
   await page.getByTestId("channel-general").click();
   await page.getByTestId("channel-management-trigger").click();
   await expect(
@@ -245,6 +258,21 @@ test("existing channel project data infers features without standalone Projects 
       .getByTestId("project-home-workspace-sheet")
       .getByText("Seeded task", { exact: true }),
   ).toBeVisible();
+
+  await page.setViewportSize({ height: 844, width: 390 });
+  const mobileSidebar = page.locator(
+    '[data-sidebar="sidebar"][data-mobile="true"]',
+  );
+  await page.getByRole("button", { name: "Toggle Sidebar" }).click();
+  await expect(mobileSidebar).toBeVisible();
+  await expect
+    .poll(async () => Math.round((await mobileSidebar.boundingBox())?.x ?? -1))
+    .toBe(0);
+  await expect(projectGroup).toBeVisible();
+  await expect(projectDisclosure).toBeVisible();
+  await expect(projectDisclosure).toHaveAttribute("aria-expanded", "true");
+  await page.keyboard.press("Escape");
+  await page.setViewportSize({ height: 720, width: 1280 });
 
   await page.getByTestId("open-settings").click();
   await page.getByTestId("profile-popover-settings").click();
