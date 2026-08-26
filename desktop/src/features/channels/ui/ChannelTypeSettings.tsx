@@ -17,8 +17,8 @@ import { SegmentedControl } from "@/shared/ui/segmented-control";
 import { ChannelTypePicker } from "./ChannelTypePicker";
 
 const CHANNEL_TYPE_OPTIONS = [
-  { value: "ongoing", label: "Ongoing", Icon: Hash },
   { value: "temporary", label: "Temporary", Icon: ClockFading },
+  { value: "ongoing", label: "Ongoing", Icon: Hash },
 ] as const;
 
 const EPHEMERAL_TIMEOUT_OPTIONS = [
