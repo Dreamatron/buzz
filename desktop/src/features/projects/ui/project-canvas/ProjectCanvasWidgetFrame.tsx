@@ -3,6 +3,28 @@ import type * as React from "react";
 
 import type { ProjectCanvasPoint } from "./projectCanvasLayout";
 
+const INTERACTIVE_WIDGET_SELECTOR = [
+  "a",
+  "audio",
+  "button",
+  "iframe",
+  "input",
+  "label",
+  "select",
+  "summary",
+  "textarea",
+  "video",
+  "[contenteditable='true']",
+  "[data-project-canvas-no-drag]",
+  "[role='button']",
+  "[role='link']",
+].join(",");
+
+function canStartWidgetDrag(event: React.PointerEvent<HTMLElement>) {
+  if (!(event.target instanceof Element)) return false;
+  return !event.target.closest(INTERACTIVE_WIDGET_SELECTOR);
+}
+
 export function ProjectCanvasWidgetFrame({
   active,
   children,
@@ -18,10 +40,7 @@ export function ProjectCanvasWidgetFrame({
   children: React.ReactNode;
   icon: LucideIcon;
   id: string;
-  onDragStart: (
-    event: React.PointerEvent<HTMLButtonElement>,
-    id: string,
-  ) => void;
+  onDragStart: (event: React.PointerEvent<HTMLElement>, id: string) => void;
   onNudge: (id: string, delta: ProjectCanvasPoint) => void;
   position: ProjectCanvasPoint;
   size: { height: number; width: number };
@@ -30,11 +49,14 @@ export function ProjectCanvasWidgetFrame({
   return (
     <article
       aria-label={`${title} widget`}
-      className="pointer-events-auto absolute flex overflow-hidden rounded-lg border border-border/75 bg-card shadow-lg"
+      className="pointer-events-auto absolute flex cursor-grab overflow-hidden rounded-lg border border-border/75 bg-card shadow-lg active:cursor-grabbing"
       data-testid={`project-canvas-widget-${id}`}
       data-world-x={position.x}
       data-world-y={position.y}
-      onPointerDown={(event) => event.stopPropagation()}
+      onPointerDown={(event) => {
+        event.stopPropagation();
+        if (canStartWidgetDrag(event)) onDragStart(event, id);
+      }}
       style={{
         height: size.height,
         left: position.x,

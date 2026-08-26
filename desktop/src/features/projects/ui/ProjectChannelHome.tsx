@@ -310,7 +310,6 @@ export function ProjectChannelHome({
               className="flex min-h-0 min-w-0 flex-1 flex-col"
               data-testid="project-channel-canvas-layout"
             >
-              <ProjectCanvasDrawer />
               <div
                 className="flex min-h-0 min-w-0 flex-1"
                 data-testid="project-channel-chat-pane"
@@ -330,6 +329,7 @@ export function ProjectChannelHome({
                         />
                       ),
                       isChannelViewActive: activeView === "chat",
+                      mainColumnHeader: <ProjectCanvasDrawer />,
                       mainContent,
                       onSelectChannelView: () => selectView("chat"),
                     }}

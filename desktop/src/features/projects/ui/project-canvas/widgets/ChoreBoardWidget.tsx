@@ -1,17 +1,21 @@
 import * as React from "react";
 
+import { UserAvatar } from "@/shared/ui/UserAvatar";
 import { Checkbox } from "@/shared/ui/checkbox";
 
 const CHORE_GROUPS = [
   {
+    avatarName: "Maya Torres",
     member: "Maya",
     chores: ["Water the herbs", "Pack the library books"],
   },
   {
+    avatarName: "Jon Cho",
     member: "Jon",
     chores: ["Take bins to the curb", "Book the car service"],
   },
   {
+    avatarName: "Ellis Reed",
     member: "Ellis",
     chores: ["Feed the fish", "Put away clean laundry"],
   },
@@ -29,8 +33,20 @@ export function ChoreBoardWidget() {
     >
       {CHORE_GROUPS.map((group) => (
         <section className="mb-2.5 last:mb-0" key={group.member}>
-          <h3 className="mb-1 text-xs font-semibold text-muted-foreground">
-            {group.member}
+          <h3 className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+            <span
+              aria-hidden="true"
+              className="shrink-0"
+              data-testid={`project-canvas-chore-member-${group.member.toLowerCase()}-avatar`}
+            >
+              <UserAvatar
+                avatarUrl={null}
+                displayName={group.avatarName}
+                fallbackDelayMs={0}
+                size="xs"
+              />
+            </span>
+            <span>{group.member}</span>
           </h3>
           <div className="space-y-0.5">
             {group.chores.map((chore) => {

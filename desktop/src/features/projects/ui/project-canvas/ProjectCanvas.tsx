@@ -1,4 +1,11 @@
-import { Bug, ListChecks, LocateFixed, RadioTower } from "lucide-react";
+import {
+  Bug,
+  Clock3,
+  ListChecks,
+  LocateFixed,
+  MessageSquareText,
+  RadioTower,
+} from "lucide-react";
 import * as React from "react";
 
 import { Button } from "@/shared/ui/button";
@@ -14,8 +21,15 @@ import {
 import { ActiveChannelsWidget } from "./widgets/ActiveChannelsWidget";
 import { BugReporterWidget } from "./widgets/BugReporterWidget";
 import { ChoreBoardWidget } from "./widgets/ChoreBoardWidget";
+import { ContractorTimeTrackingWidget } from "./widgets/ContractorTimeTrackingWidget";
+import { SupportChannelWidget } from "./widgets/SupportChannelWidget";
 
-type ProjectCanvasWidgetId = "active-channels" | "bug-reporter" | "chores";
+type ProjectCanvasWidgetId =
+  | "active-channels"
+  | "bug-reporter"
+  | "chores"
+  | "support-channel"
+  | "time-tracking";
 
 type WidgetLayout = {
   position: ProjectCanvasPoint;
@@ -32,8 +46,16 @@ const INITIAL_WIDGET_LAYOUT: Record<ProjectCanvasWidgetId, WidgetLayout> = {
     size: { height: 264, width: 384 },
   },
   chores: {
-    position: { x: 792, y: 0 },
+    position: { x: 864, y: 0 },
     size: { height: 360, width: 360 },
+  },
+  "support-channel": {
+    position: { x: 408, y: 336 },
+    size: { height: 360, width: 384 },
+  },
+  "time-tracking": {
+    position: { x: 0, y: 384 },
+    size: { height: 320, width: 360 },
   },
 };
 
@@ -137,7 +159,7 @@ export function ProjectCanvas() {
   );
 
   const startWidgetDrag = React.useCallback(
-    (event: React.PointerEvent<HTMLButtonElement>, id: string) => {
+    (event: React.PointerEvent<HTMLElement>, id: string) => {
       if (event.button !== 0) return;
       event.preventDefault();
       event.stopPropagation();
@@ -244,8 +266,29 @@ export function ProjectCanvas() {
           size={widgetLayout["bug-reporter"].size}
           title="Bug reporter"
         >
-          <BugReporterWidget gloopie={<ProjectCanvasGloopie />} />
+          <BugReporterWidget />
         </ProjectCanvasWidgetFrame>
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute h-36 w-28"
+          data-testid="project-canvas-bug-gloopie-companion"
+          data-world-x={
+            widgetLayout["bug-reporter"].position.x +
+            widgetLayout["bug-reporter"].size.width -
+            36
+          }
+          data-world-y={widgetLayout["bug-reporter"].position.y + 72}
+          style={{
+            left:
+              widgetLayout["bug-reporter"].position.x +
+              widgetLayout["bug-reporter"].size.width -
+              36,
+            top: widgetLayout["bug-reporter"].position.y + 72,
+            zIndex: activeWidgetId === "bug-reporter" ? 30 : 15,
+          }}
+        >
+          <ProjectCanvasGloopie />
+        </div>
         <ProjectCanvasWidgetFrame
           active={activeWidgetId === "chores"}
           icon={ListChecks}
@@ -257,6 +300,30 @@ export function ProjectCanvas() {
           title="Chore board"
         >
           <ChoreBoardWidget />
+        </ProjectCanvasWidgetFrame>
+        <ProjectCanvasWidgetFrame
+          active={activeWidgetId === "time-tracking"}
+          icon={Clock3}
+          id="time-tracking"
+          onDragStart={startWidgetDrag}
+          onNudge={nudgeWidget}
+          position={widgetLayout["time-tracking"].position}
+          size={widgetLayout["time-tracking"].size}
+          title="Client time"
+        >
+          <ContractorTimeTrackingWidget />
+        </ProjectCanvasWidgetFrame>
+        <ProjectCanvasWidgetFrame
+          active={activeWidgetId === "support-channel"}
+          icon={MessageSquareText}
+          id="support-channel"
+          onDragStart={startWidgetDrag}
+          onNudge={nudgeWidget}
+          position={widgetLayout["support-channel"].position}
+          size={widgetLayout["support-channel"].size}
+          title="Support pulse"
+        >
+          <SupportChannelWidget />
         </ProjectCanvasWidgetFrame>
       </div>
       <div

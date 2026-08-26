@@ -59,6 +59,7 @@ import type { ChannelPaneProps } from "@/features/channels/ui/ChannelPane.types"
 import * as agentSessionSelection from "@/features/channels/ui/agentSessionSelection";
 import { usePrepareDmSendChannel } from "@/features/channels/ui/usePrepareDmSendChannel";
 import { useChannelPaneMessages } from "@/features/channels/ui/useChannelPaneMessages";
+import { ChannelPaneMainColumn } from "@/features/channels/ui/ChannelPaneMainColumn";
 import { useChannelViewOverride } from "@/features/channels/ui/ChannelViewOverrideContext";
 import { useRoutedMessageEdit } from "@/features/channels/ui/useRoutedMessageEdit";
 import { Button } from "@/shared/ui/button";
@@ -67,7 +68,7 @@ import { isWelcomeExperienceChannel as isWelcomeExperience } from "@/features/on
 import { useIsThreadPanelOverlay } from "@/shared/hooks/use-mobile";
 import { channelChrome } from "@/shared/layout/chromeLayout";
 import { cn } from "@/shared/lib/cn";
-const HUDDLE_TRANSCRIPT_ROOT_STYLE = {
+const IN_FLOW_CHANNEL_CONTENT_STYLE = {
   "--buzz-channel-content-top-padding": "0rem",
   "--channel-top-chrome-height": "0.25rem",
 } as React.CSSProperties;
@@ -569,7 +570,7 @@ export const ChannelPane = React.memo(function ChannelPane({
   return (
     <div
       className="relative flex min-h-0 min-w-0 flex-1 flex-row overflow-hidden"
-      style={isHuddleTranscript ? HUDDLE_TRANSCRIPT_ROOT_STYLE : undefined}
+      style={isHuddleTranscript ? IN_FLOW_CHANNEL_CONTENT_STYLE : undefined}
     >
       {!isSinglePanelView && !isHuddleTranscript ? (
         <div
@@ -610,12 +611,7 @@ export const ChannelPane = React.memo(function ChannelPane({
               <ThreadRepliesErrorCard onRetry={onRetryHuddleThreadReplies} />
             </div>
           ) : null}
-          <div
-            className={cn(
-              "relative isolate flex min-h-0 min-w-0 flex-1 flex-col",
-              mainContent && "hidden",
-            )}
-          >
+          <ChannelPaneMainColumn>
             <MessageTimeline
               ref={messageTimelineRef}
               channelId={activeChannel?.id}
@@ -806,7 +802,7 @@ export const ChannelPane = React.memo(function ChannelPane({
             {canDropInMainColumn && mainComposerMedia.isDragOver ? (
               <DropZoneOverlay className="z-50 rounded-2xl bg-primary/20 backdrop-blur-sm" />
             ) : null}
-          </div>
+          </ChannelPaneMainColumn>
           {mainContent ? (
             <div
               className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden pt-(--buzz-channel-content-top-padding,5.75rem)"

@@ -20,19 +20,27 @@ async function dragBy(
   await page.mouse.up();
 }
 
-async function expectDrawerAboveChat(page: Page) {
+async function expectDrawerBelowChannelChrome(page: Page) {
+  const headerBox = await page.getByTestId("chat-header").boundingBox();
   const drawerBox = await page
     .getByTestId("project-canvas-drawer")
     .boundingBox();
   const chatBox = await page
     .getByTestId("project-channel-chat-pane")
     .boundingBox();
-  if (!drawerBox || !chatBox) {
-    throw new Error("Project drawer or chat pane was not visible.");
+  if (!headerBox || !drawerBox || !chatBox) {
+    throw new Error("Project header, drawer, or chat pane was not visible.");
   }
 
-  expect(drawerBox.y + drawerBox.height).toBeLessThanOrEqual(chatBox.y + 1);
-  expect(chatBox.height).toBeGreaterThanOrEqual(279);
+  expect(drawerBox.y).toBeGreaterThanOrEqual(
+    headerBox.y + headerBox.height - 1,
+  );
+  expect(drawerBox.y + drawerBox.height).toBeLessThanOrEqual(
+    chatBox.y + chatBox.height + 1,
+  );
+  expect(
+    chatBox.y + chatBox.height - (drawerBox.y + drawerBox.height),
+  ).toBeGreaterThanOrEqual(279);
 }
 
 test("project canvas supports drawer, pan, drag, and fake widget interactions", async ({
@@ -55,13 +63,46 @@ test("project canvas supports drawer, pan, drag, and fake widget interactions", 
   ).toBeVisible();
   await expect(page.getByTestId("project-canvas-bug-reporter")).toBeAttached();
   await expect(page.getByTestId("project-canvas-chore-board")).toBeAttached();
+  await expect(
+    page.getByTestId("project-canvas-contractor-time-tracking"),
+  ).toBeAttached();
+  await expect(
+    page.getByTestId("project-canvas-support-channel"),
+  ).toBeAttached();
+  await expect(
+    page.locator('[data-testid^="project-canvas-chore-member-"]'),
+  ).toHaveCount(3);
+  await expect(
+    page
+      .getByTestId("project-canvas-active-channel-launch-room")
+      .getByRole("listitem"),
+  ).toHaveCount(3);
+  await expect(
+    page
+      .getByTestId("project-canvas-active-channel-docs")
+      .getByRole("listitem"),
+  ).toHaveCount(1);
+  const bugWidget = page.getByTestId("project-canvas-widget-bug-reporter");
+  const gloopieCompanion = page.getByTestId(
+    "project-canvas-bug-gloopie-companion",
+  );
   const gloopie = page.getByTestId("project-canvas-gloopie");
+  await expect(bugWidget.getByTestId("project-canvas-gloopie")).toHaveCount(0);
+  await expect(gloopieCompanion).toBeVisible();
   await expect(gloopie.locator('source[type^="video/webm"]')).toHaveCount(1);
   expect(
     await gloopie.evaluate((video) =>
       (video as HTMLVideoElement).canPlayType('video/webm; codecs="vp9"'),
     ),
   ).not.toBe("");
+  const bugWidgetBox = await bugWidget.boundingBox();
+  const gloopieBox = await gloopieCompanion.boundingBox();
+  if (!bugWidgetBox || !gloopieBox) {
+    throw new Error("Bug reporter or Gloopie companion was not visible.");
+  }
+  const bugWidgetRight = bugWidgetBox.x + bugWidgetBox.width;
+  expect(gloopieBox.x).toBeLessThan(bugWidgetRight);
+  expect(gloopieBox.x + gloopieBox.width).toBeGreaterThan(bugWidgetRight);
   await expect(
     page
       .getByTestId("project-canvas-active-channels")
@@ -73,7 +114,7 @@ test("project canvas supports drawer, pan, drag, and fake widget interactions", 
   await expect(
     page.getByTestId("project-canvas-active-channel-launch-room-person-2"),
   ).toHaveAttribute("data-activity", "3");
-  await expectDrawerAboveChat(page);
+  await expectDrawerBelowChannelChrome(page);
 
   await dragBy(page, page.getByTestId("project-canvas-resize-handle"), {
     x: 0,
@@ -84,12 +125,12 @@ test("project canvas supports drawer, pan, drag, and fake widget interactions", 
     .toBeGreaterThan(0.45);
   await expect(canvas).toHaveAttribute("data-pan-x", "24");
   await expect(canvas).toHaveAttribute("data-pan-y", "24");
-  await expectDrawerAboveChat(page);
+  await expectDrawerBelowChannelChrome(page);
   await expect(
     page.getByTestId("project-canvas-resize-handle"),
   ).toHaveAttribute("aria-valuenow", /\d+/);
   await page.setViewportSize({ height: 560, width: 1280 });
-  await expectDrawerAboveChat(page);
+  await expectDrawerBelowChannelChrome(page);
   await page.setViewportSize({ height: 720, width: 1280 });
 
   const canvasBox = await canvas.boundingBox();
@@ -113,14 +154,42 @@ test("project canvas supports drawer, pan, drag, and fake widget interactions", 
 
   await dragBy(
     page,
-    page.getByTestId("project-canvas-widget-active-channels-drag-handle"),
+    page.getByTestId("project-canvas-active-channel-launch-room"),
     { x: 58, y: 34 },
   );
   await expect(activeWidget).toHaveAttribute("data-world-x", "48");
   await expect(activeWidget).toHaveAttribute("data-world-y", "24");
+  const activeWidgetDragHandle = page.getByTestId(
+    "project-canvas-widget-active-channels-drag-handle",
+  );
+  await activeWidgetDragHandle.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(activeWidget).toHaveAttribute("data-world-x", "72");
+  await page.keyboard.press("Shift+ArrowDown");
+  await expect(activeWidget).toHaveAttribute("data-world-y", "72");
 
   const bugInput = page.getByTestId("project-canvas-bug-input");
   await bugInput.fill("The save button loses focus");
+  const expandedDrawerRatio = await drawer.getAttribute("data-drawer-ratio");
+  if (!expandedDrawerRatio) {
+    throw new Error("Expanded project drawer ratio was not available.");
+  }
+
+  await page.getByTestId("project-channel-tab-repos").click();
+  await expect(drawer).not.toBeVisible();
+  await page.getByTestId("chat-title-tab").click();
+  await expect(drawer).toBeVisible();
+  await expect(drawer).toHaveAttribute(
+    "data-drawer-ratio",
+    expandedDrawerRatio,
+  );
+  await expect(canvas).toHaveAttribute("data-pan-x", "24");
+  await expect(canvas).toHaveAttribute("data-pan-y", "24");
+  await expect(activeWidget).toHaveAttribute("data-world-x", "72");
+  await expect(activeWidget).toHaveAttribute("data-world-y", "72");
+  await expect(bugInput).toHaveValue("The save button loses focus");
+  await expectDrawerBelowChannelChrome(page);
+
   expect(
     await bugInput.evaluate((input) => ({
       touchAction: getComputedStyle(input).touchAction,
@@ -161,7 +230,7 @@ test("project canvas preserves its home origin and chat on a narrow viewport", a
     page.getByTestId("project-canvas-active-channels"),
   ).toBeVisible();
   await expect(page.getByTestId("channel-composer-overlay")).toBeVisible();
-  await expectDrawerAboveChat(page);
+  await expectDrawerBelowChannelChrome(page);
 
   const resizeHandle = page.getByTestId("project-canvas-resize-handle");
   await resizeHandle.focus();

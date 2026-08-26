@@ -34,6 +34,7 @@ export function ProjectCanvasDrawer() {
     if (!container) return;
 
     const updateHeight = (height: number) => {
+      if (height <= 0) return;
       setContainerHeight(height);
       setDrawerRatio((current) =>
         clampProjectCanvasDrawerRatio(current, height),
@@ -122,10 +123,23 @@ export function ProjectCanvasDrawer() {
   );
 
   return (
+    // The canvas deliberately rejects native file drops before they reach the
+    // surrounding message-composer drop target.
+    // biome-ignore lint/a11y/noStaticElementInteractions: drag handlers only define an event boundary; they do not expose an interaction.
     <div
       className="flex min-h-24 shrink-0 flex-col overflow-hidden border-b border-border bg-background"
       data-drawer-ratio={drawerRatio.toFixed(3)}
       data-testid="project-canvas-drawer"
+      onDragEnter={(event) => event.stopPropagation()}
+      onDragLeave={(event) => event.stopPropagation()}
+      onDragOver={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+      onDrop={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      }}
       ref={drawerRef}
       style={{ height: `${drawerRatio * 100}%` }}
     >
