@@ -220,10 +220,7 @@ export function ChannelScreen({
     activeReadAt,
   );
   React.useEffect(() => {
-    if (!activeChannelId) {
-      setContextParentResolver(null);
-      return;
-    }
+    if (!activeChannelId) return setContextParentResolver(null);
     setContextParentResolver((contextId) =>
       contextId.startsWith(readStateFormat.THREAD_PREFIX) ||
       contextId.startsWith(readStateFormat.MSG_PREFIX)

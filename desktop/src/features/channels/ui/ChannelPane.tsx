@@ -212,7 +212,6 @@ export const ChannelPane = React.memo(function ChannelPane({
       channelPaneMountedRef.current = false;
     };
   }, []);
-  // Clear only auto-send so thread state survives; older wrappers fall back to goChannel.
   const handleAutoSubmitComplete = React.useCallback(() => {
     if (onAutoSendComplete) {
       onAutoSendComplete();
@@ -527,7 +526,6 @@ export const ChannelPane = React.memo(function ChannelPane({
     useFocusIdleDrawer && onCloseIdleAuxiliaryPanel ? (
       <FocusThreadDrawer
         channelName={activeChannel?.name ?? "channel"}
-        // The idle panel hosts no message editor, so Escape always dismisses.
         hasActiveEdit={false}
         key="idle-auxiliary-surface"
         label={idleAuxiliaryTitle || "Panel"}
