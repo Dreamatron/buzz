@@ -2,6 +2,7 @@ import * as React from "react";
 
 type ChannelViewOverride = {
   headerNavigation: React.ReactNode;
+  hideMainColumnBody?: boolean;
   isChannelViewActive: boolean;
   mainColumnHeader?: React.ReactNode;
   mainContent: React.ReactNode;

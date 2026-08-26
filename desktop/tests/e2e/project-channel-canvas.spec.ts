@@ -20,43 +20,48 @@ async function dragBy(
   await page.mouse.up();
 }
 
-async function expectDrawerBelowChannelChrome(page: Page) {
+async function expectPreviewBelowChannelChrome(page: Page) {
   const headerBox = await page.getByTestId("chat-header").boundingBox();
-  const drawerBox = await page
-    .getByTestId("project-canvas-drawer")
+  const previewBox = await page
+    .getByTestId("project-canvas-surface")
     .boundingBox();
   const chatBox = await page
     .getByTestId("project-channel-chat-pane")
     .boundingBox();
-  if (!headerBox || !drawerBox || !chatBox) {
-    throw new Error("Project header, drawer, or chat pane was not visible.");
+  if (!headerBox || !previewBox || !chatBox) {
+    throw new Error(
+      "Project header, canvas preview, or chat pane was not visible.",
+    );
   }
 
-  expect(drawerBox.y).toBeGreaterThanOrEqual(
+  expect(previewBox.y).toBeGreaterThanOrEqual(
     headerBox.y + headerBox.height - 1,
   );
-  expect(drawerBox.y + drawerBox.height).toBeLessThanOrEqual(
+  expect(previewBox.y + previewBox.height).toBeLessThanOrEqual(
     chatBox.y + chatBox.height + 1,
   );
   expect(
-    chatBox.y + chatBox.height - (drawerBox.y + drawerBox.height),
-  ).toBeGreaterThanOrEqual(279);
+    chatBox.y + chatBox.height - (previewBox.y + previewBox.height),
+  ).toBeGreaterThanOrEqual(160);
 }
 
-test("project canvas supports drawer, pan, drag, and fake widget interactions", async ({
+test("project canvas supports preview, full tab, drag, and fake widget interactions", async ({
   page,
 }) => {
   await installMockBridge(page);
   await page.goto("/");
 
   await page.getByTestId("channel-general").click();
-  await expect(page.getByTestId("project-canvas-drawer")).toHaveCount(0);
+  await expect(page.getByTestId("project-canvas-surface")).toHaveCount(0);
 
   await page.getByTestId("channel-buzz").click();
   await expect(page.getByTestId("project-channel-home")).toBeVisible();
-  const drawer = page.getByTestId("project-canvas-drawer");
+  const surface = page.getByTestId("project-canvas-surface");
   const canvas = page.getByTestId("project-widget-canvas");
-  await expect(drawer).toHaveAttribute("data-drawer-ratio", "0.333");
+  await expect(surface).toHaveAttribute("data-canvas-mode", "preview");
+  await expect(page.getByTestId("project-canvas-preview-fade")).toBeVisible();
+  await expect(page.getByTestId("project-canvas-show-full")).toBeVisible();
+  await expect(page.getByTestId("project-channel-tab-canvas")).toBeVisible();
   await expect(page.getByTestId("channel-composer-overlay")).toBeVisible();
   await expect(
     page.getByTestId("project-canvas-active-channels"),
@@ -114,24 +119,9 @@ test("project canvas supports drawer, pan, drag, and fake widget interactions", 
   await expect(
     page.getByTestId("project-canvas-active-channel-launch-room-person-2"),
   ).toHaveAttribute("data-activity", "3");
-  await expectDrawerBelowChannelChrome(page);
-
-  await dragBy(page, page.getByTestId("project-canvas-resize-handle"), {
-    x: 0,
-    y: 220,
-  });
-  await expect
-    .poll(async () => Number(await drawer.getAttribute("data-drawer-ratio")))
-    .toBeGreaterThan(0.45);
+  await expectPreviewBelowChannelChrome(page);
   await expect(canvas).toHaveAttribute("data-pan-x", "24");
   await expect(canvas).toHaveAttribute("data-pan-y", "24");
-  await expectDrawerBelowChannelChrome(page);
-  await expect(
-    page.getByTestId("project-canvas-resize-handle"),
-  ).toHaveAttribute("aria-valuenow", /\d+/);
-  await page.setViewportSize({ height: 560, width: 1280 });
-  await expectDrawerBelowChannelChrome(page);
-  await page.setViewportSize({ height: 720, width: 1280 });
 
   const canvasBox = await canvas.boundingBox();
   if (!canvasBox) throw new Error("Project canvas was not visible.");
@@ -170,25 +160,46 @@ test("project canvas supports drawer, pan, drag, and fake widget interactions", 
 
   const bugInput = page.getByTestId("project-canvas-bug-input");
   await bugInput.fill("The save button loses focus");
-  const expandedDrawerRatio = await drawer.getAttribute("data-drawer-ratio");
-  if (!expandedDrawerRatio) {
-    throw new Error("Expanded project drawer ratio was not available.");
-  }
+  const previewBox = await surface.boundingBox();
+  if (!previewBox) throw new Error("Project canvas preview was not visible.");
+
+  await page.getByTestId("project-canvas-show-full").click();
+  await expect(surface).toHaveAttribute("data-canvas-mode", "full");
+  await expect(page.getByTestId("project-channel-tab-canvas")).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(page.getByTestId("chat-title-tab")).toHaveAttribute(
+    "aria-selected",
+    "false",
+  );
+  await expect(page.getByTestId("project-canvas-preview-fade")).toHaveCount(0);
+  await expect(page.getByTestId("project-canvas-show-full")).toHaveCount(0);
+  await expect(page.getByTestId("channel-main-column-body")).toBeHidden();
+  const fullBox = await surface.boundingBox();
+  if (!fullBox) throw new Error("Full project canvas was not visible.");
+  expect(fullBox.height).toBeGreaterThan(previewBox.height + 150);
+  await expect(canvas).toHaveAttribute("data-pan-x", "24");
+  await expect(activeWidget).toHaveAttribute("data-world-x", "72");
+  await expect(bugInput).toHaveValue("The save button loses focus");
+
+  await page.getByTestId("chat-title-tab").click();
+  await expect(surface).toHaveAttribute("data-canvas-mode", "preview");
+  await expect(page.getByTestId("project-canvas-show-full")).toBeVisible();
+  await expect(page.getByTestId("channel-main-column-body")).toBeVisible();
+  await expectPreviewBelowChannelChrome(page);
 
   await page.getByTestId("project-channel-tab-repos").click();
-  await expect(drawer).not.toBeVisible();
+  await expect(surface).not.toBeVisible();
   await page.getByTestId("chat-title-tab").click();
-  await expect(drawer).toBeVisible();
-  await expect(drawer).toHaveAttribute(
-    "data-drawer-ratio",
-    expandedDrawerRatio,
-  );
+  await expect(surface).toBeVisible();
+  await expect(surface).toHaveAttribute("data-canvas-mode", "preview");
   await expect(canvas).toHaveAttribute("data-pan-x", "24");
   await expect(canvas).toHaveAttribute("data-pan-y", "24");
   await expect(activeWidget).toHaveAttribute("data-world-x", "72");
   await expect(activeWidget).toHaveAttribute("data-world-y", "72");
   await expect(bugInput).toHaveValue("The save button loses focus");
-  await expectDrawerBelowChannelChrome(page);
+  await expectPreviewBelowChannelChrome(page);
 
   expect(
     await bugInput.evaluate((input) => ({
@@ -211,7 +222,7 @@ test("project canvas supports drawer, pan, drag, and fake widget interactions", 
   await expect(canvas).toHaveAttribute("data-pan-y", "24");
 });
 
-test("project canvas preserves its home origin and chat on a narrow viewport", async ({
+test("project canvas preview and full tab fit a narrow viewport", async ({
   page,
 }) => {
   await page.setViewportSize({ height: 844, width: 390 });
@@ -221,23 +232,25 @@ test("project canvas preserves its home origin and chat on a narrow viewport", a
   await page.getByTestId("channel-buzz").click();
   await page.keyboard.press("Escape");
 
-  const drawer = page.getByTestId("project-canvas-drawer");
+  const surface = page.getByTestId("project-canvas-surface");
   const canvas = page.getByTestId("project-widget-canvas");
-  await expect(drawer).toHaveAttribute("data-drawer-ratio", "0.333");
+  await expect(surface).toHaveAttribute("data-canvas-mode", "preview");
   await expect(canvas).toHaveAttribute("data-pan-x", "24");
   await expect(canvas).toHaveAttribute("data-pan-y", "24");
   await expect(
     page.getByTestId("project-canvas-active-channels"),
   ).toBeVisible();
   await expect(page.getByTestId("channel-composer-overlay")).toBeVisible();
-  await expectDrawerBelowChannelChrome(page);
+  await expect(page.getByTestId("project-canvas-show-full")).toBeVisible();
+  await expectPreviewBelowChannelChrome(page);
 
-  const resizeHandle = page.getByTestId("project-canvas-resize-handle");
-  await resizeHandle.focus();
-  await page.keyboard.press("ArrowDown");
-  await expect(drawer).not.toHaveAttribute("data-drawer-ratio", "0.333");
-  await page.keyboard.press("Home");
-  await expect(drawer).toHaveAttribute("data-drawer-ratio", "0.333");
+  await page.getByTestId("project-canvas-show-full").click();
+  await expect(surface).toHaveAttribute("data-canvas-mode", "full");
+  await expect(page.getByTestId("project-channel-tab-canvas")).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(page.getByTestId("channel-composer-overlay")).toBeHidden();
 
   const canvasBox = await canvas.boundingBox();
   const activeBox = await page
@@ -250,4 +263,8 @@ test("project canvas preserves its home origin and chat on a narrow viewport", a
   expect(activeBox.x + activeBox.width).toBeLessThanOrEqual(
     canvasBox.x + canvasBox.width,
   );
+
+  await page.getByTestId("chat-title-tab").click();
+  await expect(surface).toHaveAttribute("data-canvas-mode", "preview");
+  await expect(page.getByTestId("channel-composer-overlay")).toBeVisible();
 });

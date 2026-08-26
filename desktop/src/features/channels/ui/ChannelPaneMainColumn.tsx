@@ -36,7 +36,12 @@ export function ChannelPaneMainColumn({
           style={IN_FLOW_CHANNEL_CONTENT_STYLE}
         >
           {mainColumnHeader}
-          {children}
+          <div
+            className={channelView?.hideMainColumnBody ? "hidden" : "contents"}
+            data-testid="channel-main-column-body"
+          >
+            {children}
+          </div>
         </div>
       </div>
     </div>

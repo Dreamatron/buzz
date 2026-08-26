@@ -4,17 +4,23 @@ import * as React from "react";
 
 export type ProjectChannelView =
   | "chat"
+  | "canvas"
   | "issues"
   | "channels"
   | "reviews"
   | "repos";
 
 const PROJECT_CHANNEL_TABS: Array<{
-  feature: ChannelProjectFeature;
+  feature?: ChannelProjectFeature;
   label: string;
   testId: string;
   value: Exclude<ProjectChannelView, "chat">;
 }> = [
+  {
+    label: "Canvas",
+    testId: "project-channel-tab-canvas",
+    value: "canvas",
+  },
   {
     feature: "tasks",
     label: "Tasks",
@@ -45,11 +51,11 @@ export function projectChannelViewEnabled(
   view: ProjectChannelView,
   enabledFeatures: Record<ChannelProjectFeature, boolean>,
 ) {
-  if (view === "chat") return true;
+  if (view === "chat" || view === "canvas") return true;
   const tab = PROJECT_CHANNEL_TABS.find(
     (candidate) => candidate.value === view,
   );
-  return tab ? enabledFeatures[tab.feature] : false;
+  return tab?.feature ? enabledFeatures[tab.feature] : false;
 }
 
 export function ProjectChannelTabs({
@@ -84,7 +90,7 @@ export function ProjectChannelTabs({
       data-testid="project-channel-tabs"
     >
       {PROJECT_CHANNEL_TABS.map((tab) =>
-        enabledFeatures[tab.feature] ? (
+        !tab.feature || enabledFeatures[tab.feature] ? (
           <button
             aria-selected={activeView === tab.value}
             className={cn(

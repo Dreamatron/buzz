@@ -22,7 +22,7 @@ import { Button } from "@/shared/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { ViewLoadingFallback } from "@/shared/ui/ViewLoadingFallback";
 import { ProjectChannelResourcesView } from "./ProjectChannelResourcesView";
-import { ProjectCanvasDrawer } from "./project-canvas/ProjectCanvasDrawer";
+import { ProjectCanvasSurface } from "./project-canvas/ProjectCanvasSurface";
 import {
   ProjectChannelTabs,
   projectChannelViewEnabled,
@@ -328,8 +328,14 @@ export function ProjectChannelHome({
                           onSelect={selectView}
                         />
                       ),
+                      hideMainColumnBody: activeView === "canvas",
                       isChannelViewActive: activeView === "chat",
-                      mainColumnHeader: <ProjectCanvasDrawer />,
+                      mainColumnHeader: (
+                        <ProjectCanvasSurface
+                          full={activeView === "canvas"}
+                          onShowFullCanvas={() => selectView("canvas")}
+                        />
+                      ),
                       mainContent,
                       onSelectChannelView: () => selectView("chat"),
                     }}
