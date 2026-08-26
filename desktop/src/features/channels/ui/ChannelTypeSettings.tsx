@@ -1,4 +1,4 @@
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, ClockFading, Hash } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 
 import {
@@ -13,7 +13,13 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@/shared/ui/dropdown-menu";
+import { SegmentedControl } from "@/shared/ui/segmented-control";
 import { ChannelTypePicker } from "./ChannelTypePicker";
+
+const CHANNEL_TYPE_OPTIONS = [
+  { value: "ongoing", label: "Ongoing", Icon: Hash },
+  { value: "temporary", label: "Temporary", Icon: ClockFading },
+] as const;
 
 const EPHEMERAL_TIMEOUT_OPTIONS = [
   { label: "30 minutes", seconds: 30 * 60 },
@@ -42,6 +48,7 @@ export function ChannelTypeSettings({
   temporary,
   testIdPrefix,
   ttlSeconds,
+  variant = "dropdown",
 }: {
   disabled?: boolean;
   label?: string;
@@ -52,6 +59,7 @@ export function ChannelTypeSettings({
   temporary: boolean;
   testIdPrefix: string;
   ttlSeconds: number;
+  variant?: "dropdown" | "segmented";
 }) {
   const shouldReduceMotion = useReducedMotion();
   const channelTypeResizeTransition = shouldReduceMotion
@@ -80,16 +88,28 @@ export function ChannelTypeSettings({
         data-testid={`${testIdPrefix}-channel-type-row`}
       >
         <span className="text-sm font-medium text-foreground">{label}</span>
-        <ChannelTypePicker
-          align="end"
-          className="-mr-2.5"
-          disabled={disabled}
-          onOpenChange={onOpenChange}
-          onTemporaryChange={onTemporaryChange}
-          open={open}
-          temporary={temporary}
-          testId={`${testIdPrefix}-channel-type`}
-        />
+        {variant === "segmented" ? (
+          <SegmentedControl
+            disabled={disabled}
+            legend="Channel type"
+            onValueChange={(value) => onTemporaryChange(value === "temporary")}
+            optionTestIdPrefix={`${testIdPrefix}-channel-type-option`}
+            options={CHANNEL_TYPE_OPTIONS}
+            testId={`${testIdPrefix}-channel-type`}
+            value={temporary ? "temporary" : "ongoing"}
+          />
+        ) : (
+          <ChannelTypePicker
+            align="end"
+            className="-mr-2.5"
+            disabled={disabled}
+            onOpenChange={onOpenChange}
+            onTemporaryChange={onTemporaryChange}
+            open={open}
+            temporary={temporary}
+            testId={`${testIdPrefix}-channel-type`}
+          />
+        )}
       </div>
       <AnimatePresence initial={false}>
         {temporary ? (
