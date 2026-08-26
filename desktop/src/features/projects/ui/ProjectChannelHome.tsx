@@ -22,6 +22,7 @@ import { Button } from "@/shared/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { ViewLoadingFallback } from "@/shared/ui/ViewLoadingFallback";
 import { ProjectChannelResourcesView } from "./ProjectChannelResourcesView";
+import { ProjectCanvasDrawer } from "./project-canvas/ProjectCanvasDrawer";
 import {
   ProjectChannelTabs,
   projectChannelViewEnabled,
@@ -305,52 +306,63 @@ export function ProjectChannelHome({
           {waitingForChannel ? (
             <ViewLoadingFallback kind="channel" />
           ) : homeChannel ? (
-            <React.Suspense
-              fallback={
-                <ChannelScreenLoadingFallback isHuddleTranscript={false} />
-              }
+            <div
+              className="flex min-h-0 min-w-0 flex-1 flex-col"
+              data-testid="project-channel-canvas-layout"
             >
-              <ChannelViewOverrideProvider
-                value={{
-                  headerNavigation: (
-                    <ProjectChannelTabs
-                      activeView={activeView}
-                      enabledFeatures={channelFeatures.enabled}
-                      onSelect={selectView}
-                    />
-                  ),
-                  isChannelViewActive: activeView === "chat",
-                  mainContent,
-                  onSelectChannelView: () => selectView("chat"),
-                }}
+              <ProjectCanvasDrawer />
+              <div
+                className="flex min-h-0 min-w-0 flex-1"
+                data-testid="project-channel-chat-pane"
               >
-                <ChannelScreenView
-                  activeChannel={homeChannel}
-                  autoSendDraftKey={
-                    autoSendDraftKey === undefined
-                      ? (search.autoSend ?? null)
-                      : autoSendDraftKey
+                <React.Suspense
+                  fallback={
+                    <ChannelScreenLoadingFallback isHuddleTranscript={false} />
                   }
-                  currentIdentity={identityQuery.data}
-                  currentProfile={profileQuery.data}
-                  onAddFiles={
-                    channelFeatures.enabled.repositories
-                      ? handleAddFiles
-                      : undefined
-                  }
-                  onCloseForumPost={ignoreForumPost}
-                  onSelectForumPost={ignoreForumPostSelect}
-                  selectedForumPostId={null}
-                  targetForumReplyId={null}
-                  targetMessageEvents={targetMessageEvents}
-                  targetMessageId={
-                    targetMessageId === undefined
-                      ? (search.messageId ?? null)
-                      : targetMessageId
-                  }
-                />
-              </ChannelViewOverrideProvider>
-            </React.Suspense>
+                >
+                  <ChannelViewOverrideProvider
+                    value={{
+                      headerNavigation: (
+                        <ProjectChannelTabs
+                          activeView={activeView}
+                          enabledFeatures={channelFeatures.enabled}
+                          onSelect={selectView}
+                        />
+                      ),
+                      isChannelViewActive: activeView === "chat",
+                      mainContent,
+                      onSelectChannelView: () => selectView("chat"),
+                    }}
+                  >
+                    <ChannelScreenView
+                      activeChannel={homeChannel}
+                      autoSendDraftKey={
+                        autoSendDraftKey === undefined
+                          ? (search.autoSend ?? null)
+                          : autoSendDraftKey
+                      }
+                      currentIdentity={identityQuery.data}
+                      currentProfile={profileQuery.data}
+                      onAddFiles={
+                        channelFeatures.enabled.repositories
+                          ? handleAddFiles
+                          : undefined
+                      }
+                      onCloseForumPost={ignoreForumPost}
+                      onSelectForumPost={ignoreForumPostSelect}
+                      selectedForumPostId={null}
+                      targetForumReplyId={null}
+                      targetMessageEvents={targetMessageEvents}
+                      targetMessageId={
+                        targetMessageId === undefined
+                          ? (search.messageId ?? null)
+                          : targetMessageId
+                      }
+                    />
+                  </ChannelViewOverrideProvider>
+                </React.Suspense>
+              </div>
+            </div>
           ) : (
             <div className="flex min-h-0 flex-1 items-center justify-center px-6 py-8">
               <p className="text-sm text-muted-foreground">

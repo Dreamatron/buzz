@@ -29,6 +29,7 @@ export default defineConfig({
         "**/navigation.spec.ts",
         "**/channels.spec.ts",
         "**/channel-project-features.spec.ts",
+        "**/project-channel-canvas.spec.ts",
         "**/channel-shared-header-backdrop.spec.ts",
         "**/channel-composer-overflow.spec.ts",
         "**/badge.spec.ts",
