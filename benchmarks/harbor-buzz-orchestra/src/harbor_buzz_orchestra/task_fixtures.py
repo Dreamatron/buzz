@@ -175,7 +175,7 @@ _MEMORY_RETRIEVAL_FIXTURE = BuzzTaskFixture(
     user_display_name="Amelia Rose Bennett",
     memory_seeds=(
         MemorySeed(
-            slug="finance-conventions-7f2a",
+            slug="finance-conventions",
             value=(
                 "For GPV calculation, always use the net_gpv column, not the "
                 "gross_gpv column."
