@@ -342,6 +342,9 @@ pub(crate) async fn run_setup_listener(config: Config, payload: SetupPayload) ->
 
     tracing::info!("setup-mode: connected and subscribed to membership notifications");
 
+    let rest_client = relay.rest_client();
+    let mut relay_self = crate::refresh_relay_self(&rest_client, None, "setup startup").await;
+
     // Resolve owner for author-gate (same priority as normal mode).
     let startup_owner = crate::resolve_agent_owner(&config);
     let owner_cache = crate::OwnerCache::new(startup_owner);
@@ -381,7 +384,6 @@ pub(crate) async fn run_setup_listener(config: Config, payload: SetupPayload) ->
     }
 
     let publisher = relay.event_publisher();
-    let rest_client = relay.rest_client();
 
     let channel_info = crate::pool::ChannelInfoResolver::new(channel_info_map, rest_client.clone());
 
@@ -395,6 +397,8 @@ pub(crate) async fn run_setup_listener(config: Config, payload: SetupPayload) ->
                 tracing::error!("setup-mode: relay background task is gone: {e} — exiting");
                 break;
             }
+            relay_self =
+                crate::refresh_relay_self(&rest_client, relay_self, "setup reconnect").await;
             continue;
         };
 
@@ -428,7 +432,7 @@ pub(crate) async fn run_setup_listener(config: Config, payload: SetupPayload) ->
         // Apply the same author gate as normal mode so the nudge only goes
         // to authors the real agent would have answered. Same DM hardening:
         // in DMs only owner/siblings get a nudge (fail-closed on unknown type).
-        let author_hex = buzz_event.event.pubkey.to_hex();
+        let author_hex = crate::effective_prompt_author(&buzz_event.event, relay_self.as_deref());
         let is_dm = crate::is_dm_channel(buzz_event.channel_id, &channel_info).await;
         let allowed = author_allowed(
             &config.respond_to,

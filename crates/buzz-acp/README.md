@@ -147,6 +147,10 @@ Controls which authors' events the harness forwards to the agent. Events from di
 | `anyone` | Forward all events (no author filtering). |
 | `nobody` | Drop all inbound events. Agent only acts on heartbeat prompts. |
 
+Relay-signed workflow messages with explicit owner provenance are first verified
+against the relay's NIP-11 `self` key, then evaluated under the same author
+policy as ordinary messages. `nobody` remains absolute.
+
 The gate applies to **all** inbound events — @mentions, DMs, thread replies, and any event delivered by the relay. Owner control commands are checked **before** the gate, so the owner can still manage the harness regardless of mode:
 
 | Command | Effect |
