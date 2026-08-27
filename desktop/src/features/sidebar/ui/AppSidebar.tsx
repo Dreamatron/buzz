@@ -19,6 +19,7 @@ import {
 } from "@/features/sidebar/lib/channelSortPreference";
 import { useChannelSortPreference } from "@/features/sidebar/lib/useChannelSortPreference";
 import { useProjectMoveDestinations } from "@/features/sidebar/lib/useProjectMoveDestinations";
+import { useProjectSidebarMembership } from "@/features/projects/lib/useProjectSidebarMembership";
 import { useSidebarScrollLock } from "@/features/sidebar/lib/useSidebarScrollLock";
 import { isSidebarBackgroundTarget } from "@/features/sidebar/lib/sidebarBackgroundTarget";
 import { useSidebarActivityOverflow } from "@/features/sidebar/lib/useSidebarActivityOverflow";
@@ -39,10 +40,7 @@ import {
   MoreUnreadButton,
   preferredUnreadTarget,
 } from "@/features/sidebar/ui/MoreUnreadButton";
-import {
-  ProjectChannelGroup,
-  listProjectChannelGroups,
-} from "@/features/sidebar/ui/ProjectChannelGroup";
+import { SidebarProjectsSection } from "@/features/sidebar/ui/SidebarProjectsSection";
 import { unreadCountLabel } from "@/shared/ui/UnreadPill";
 import { SidebarSection } from "@/features/sidebar/ui/SidebarSection";
 import {
@@ -69,6 +67,7 @@ import { SidebarUpdateCard } from "@/features/settings/SidebarUpdateCard";
 import { useUpdaterContext } from "@/features/settings/hooks/UpdaterProvider";
 import { shouldShowSidebarUpdateCard } from "@/features/settings/sidebarUpdateCardVisibility";
 import type { Channel, ChannelVisibility } from "@/shared/api/types";
+import { useRelayOrigin } from "@/shared/lib/useRelayOrigin";
 import {
   Sidebar,
   SidebarContent,
@@ -226,15 +225,23 @@ export function AppSidebar({
     assignChannel,
     unassignChannel,
   } = useChannelSections(currentPubkey, activeCommunity?.relayUrl);
+  const relayOrigin = useRelayOrigin();
   const { assignChannelToProject, destinations: projectMoveDestinations } =
     useProjectMoveDestinations({
       assignChannel,
       channels,
       createSection,
       currentPubkey,
+      relayOrigin,
       relayUrl: activeCommunity?.relayUrl,
       sections: channelSections,
     });
+  const sidebarProjectAddresses = useProjectSidebarMembership(
+    relayOrigin,
+    currentPubkey,
+  );
+  const [visibleSidebarProjectAddresses, setVisibleSidebarProjectAddresses] =
+    React.useState<readonly string[]>([]);
 
   const sectionIds = React.useMemo(
     () => channelSections.map((s) => s.id),
@@ -312,29 +319,37 @@ export function AppSidebar({
     );
   }, [streamChannels, starredChannelIds, sortModeFor]);
 
-  const projectChannelGroups = listProjectChannelGroups({
-    channels: streamChannels,
-    destinations: projectMoveDestinations,
-    sectionChannels: sectionBuckets.bySection,
-  });
+  const sidebarProjectAddressSet = new Set(visibleSidebarProjectAddresses);
+  const sidebarProjectDestinations = projectMoveDestinations.filter(
+    (destination) => sidebarProjectAddressSet.has(destination.projectAddress),
+  );
   const projectSectionIds = new Set(
-    projectChannelGroups.map((group) => group.sectionId),
+    sidebarProjectDestinations.flatMap((destination) =>
+      destination.sectionId ? [destination.sectionId] : [],
+    ),
   );
   const visibleChannelSections = channelSections.filter(
     (section) => !projectSectionIds.has(section.id),
   );
-  const projectGroupByHomeChannelId = new Map(
-    projectChannelGroups.map((group) => [group.homeChannel.id, group]),
+  const projectHomeChannelIds = new Set(
+    sidebarProjectDestinations.map(
+      (destination) => destination.projectChannelId,
+    ),
+  );
+  const projectSectionChannels = new Map(
+    sidebarProjectDestinations.map((destination) => [
+      destination.projectAddress,
+      destination.sectionId
+        ? (sectionBuckets.bySection[destination.sectionId] ?? []).filter(
+            (channel) => channel.id !== destination.projectChannelId,
+          )
+        : [],
+    ]),
   );
   const channelsListItems = sortChannelsForSidebar(
-    [
-      ...new Map(
-        [
-          ...sectionBuckets.unassigned,
-          ...projectChannelGroups.map((group) => group.homeChannel),
-        ].map((channel) => [channel.id, channel]),
-      ).values(),
-    ],
+    sectionBuckets.unassigned.filter(
+      (channel) => !projectHomeChannelIds.has(channel.id),
+    ),
     sortModeFor("channels"),
   );
 
@@ -538,44 +553,6 @@ export function AppSidebar({
 
               {!isLoading ? (
                 <>
-                  {starredChannels.length > 0 ? (
-                    <ChannelGroupSection
-                      hasUnread={starredChannels.some((c) =>
-                        unreadChannelIds.has(c.id),
-                      )}
-                      isCollapsed={collapsedGroups.starred}
-                      isActiveChannel={selectedView === "channel"}
-                      activeWorkingByChannelId={activeWorkingByChannelId}
-                      items={starredChannels}
-                      sortMode={sortModeFor("starred")}
-                      onSortModeChange={(mode) =>
-                        setSortModeFor("starred", mode)
-                      }
-                      actionsTestId="section-actions-starred"
-                      listTestId="starred-list"
-                      onMarkAllRead={() => {
-                        for (const channel of starredChannels) {
-                          onMarkChannelRead(channel.id, channel.lastMessageAt);
-                        }
-                      }}
-                      onMarkChannelRead={onMarkChannelRead}
-                      onMarkChannelUnread={onMarkChannelUnread}
-                      onSelectChannel={onSelectChannel}
-                      onToggleCollapsed={() => toggleCollapsedGroup("starred")}
-                      selectedChannelId={selectedChannelId}
-                      title="Starred"
-                      unreadChannelCounts={unreadChannelCounts}
-                      unreadChannelIds={unreadChannelIds}
-                      mutedChannelIds={mutedChannelIds}
-                      onMuteChannel={onMuteChannel}
-                      onUnmuteChannel={onUnmuteChannel}
-                      starredChannelIds={starredChannelIds}
-                      onStarChannel={onStarChannel}
-                      onUnstarChannel={onUnstarChannel}
-                      onDeleteChannel={requestDeleteChannel}
-                      onLeaveChannel={requestLeaveChannel}
-                    />
-                  ) : null}
                   <SidebarDndContext
                     channels={channels}
                     sections={channelSections}
@@ -584,6 +561,82 @@ export function AppSidebar({
                     onUnassignChannel={unassignChannel}
                     onReorderSections={reorderSections}
                   >
+                    <SidebarProjectsSection
+                      addedProjectAddresses={sidebarProjectAddresses}
+                      channelRowContext={{
+                        activeWorkingByChannelId,
+                        assignments: channelAssignments,
+                        isActiveChannel: selectedView === "channel",
+                        mutedChannelIds,
+                        onAssignChannel: assignChannel,
+                        onAssignChannelToProject: assignChannelToProject,
+                        onCreateSectionForChannel:
+                          handleCreateSectionForChannel,
+                        onDeleteChannel: requestDeleteChannel,
+                        onLeaveChannel: requestLeaveChannel,
+                        onMarkChannelRead,
+                        onMarkChannelUnread,
+                        onMuteChannel,
+                        onSelectChannel,
+                        onStarChannel,
+                        onUnassignChannel: unassignChannel,
+                        onUnmuteChannel,
+                        onUnstarChannel,
+                        projectDestinations: projectMoveDestinations,
+                        sections: channelSections,
+                        selectedChannelId,
+                        starredChannelIds,
+                        unreadChannelCounts,
+                        unreadChannelIds,
+                      }}
+                      onVisibleProjectAddressesChange={
+                        setVisibleSidebarProjectAddresses
+                      }
+                      sectionChannelsByProjectAddress={projectSectionChannels}
+                    />
+                    {starredChannels.length > 0 ? (
+                      <ChannelGroupSection
+                        hasUnread={starredChannels.some((c) =>
+                          unreadChannelIds.has(c.id),
+                        )}
+                        isCollapsed={collapsedGroups.starred}
+                        isActiveChannel={selectedView === "channel"}
+                        activeWorkingByChannelId={activeWorkingByChannelId}
+                        items={starredChannels}
+                        sortMode={sortModeFor("starred")}
+                        onSortModeChange={(mode) =>
+                          setSortModeFor("starred", mode)
+                        }
+                        actionsTestId="section-actions-starred"
+                        listTestId="starred-list"
+                        onMarkAllRead={() => {
+                          for (const channel of starredChannels) {
+                            onMarkChannelRead(
+                              channel.id,
+                              channel.lastMessageAt,
+                            );
+                          }
+                        }}
+                        onMarkChannelRead={onMarkChannelRead}
+                        onMarkChannelUnread={onMarkChannelUnread}
+                        onSelectChannel={onSelectChannel}
+                        onToggleCollapsed={() =>
+                          toggleCollapsedGroup("starred")
+                        }
+                        selectedChannelId={selectedChannelId}
+                        title="Starred"
+                        unreadChannelCounts={unreadChannelCounts}
+                        unreadChannelIds={unreadChannelIds}
+                        mutedChannelIds={mutedChannelIds}
+                        onMuteChannel={onMuteChannel}
+                        onUnmuteChannel={onUnmuteChannel}
+                        starredChannelIds={starredChannelIds}
+                        onStarChannel={onStarChannel}
+                        onUnstarChannel={onUnstarChannel}
+                        onDeleteChannel={requestDeleteChannel}
+                        onLeaveChannel={requestLeaveChannel}
+                      />
+                    ) : null}
                     {visibleChannelSections.map((section, idx) => {
                       const sectionChannels =
                         sectionBuckets.bySection[section.id] ?? [];
@@ -680,50 +733,6 @@ export function AppSidebar({
                       onMarkAllRead={onMarkAllChannelsRead}
                       onMarkChannelRead={onMarkChannelRead}
                       onMarkChannelUnread={onMarkChannelUnread}
-                      renderChannel={(channel) => {
-                        const group = projectGroupByHomeChannelId.get(
-                          channel.id,
-                        );
-                        return group ? (
-                          <ProjectChannelGroup
-                            activeWorkingByChannelId={activeWorkingByChannelId}
-                            assignments={channelAssignments}
-                            channels={group.channels}
-                            destination={group.destination}
-                            isActiveChannel={selectedView === "channel"}
-                            isExpanded={
-                              !(collapsedSections[group.sectionId] ?? false)
-                            }
-                            key={group.sectionId}
-                            mutedChannelIds={mutedChannelIds}
-                            onAssignChannel={assignChannel}
-                            onAssignChannelToProject={assignChannelToProject}
-                            onCreateSectionForChannel={
-                              handleCreateSectionForChannel
-                            }
-                            onDeleteChannel={requestDeleteChannel}
-                            onLeaveChannel={requestLeaveChannel}
-                            onMarkChannelRead={onMarkChannelRead}
-                            onMarkChannelUnread={onMarkChannelUnread}
-                            onMuteChannel={onMuteChannel}
-                            onSelectChannel={onSelectChannel}
-                            onStarChannel={onStarChannel}
-                            onToggleExpanded={() =>
-                              toggleCollapsedSection(group.sectionId)
-                            }
-                            onUnassignChannel={unassignChannel}
-                            onUnmuteChannel={onUnmuteChannel}
-                            onUnstarChannel={onUnstarChannel}
-                            projectDestinations={projectMoveDestinations}
-                            sectionId={group.sectionId}
-                            sections={channelSections}
-                            selectedChannelId={selectedChannelId}
-                            starredChannelIds={starredChannelIds}
-                            unreadChannelCounts={unreadChannelCounts}
-                            unreadChannelIds={unreadChannelIds}
-                          />
-                        ) : undefined;
-                      }}
                       onSelectChannel={onSelectChannel}
                       onToggleCollapsed={() => toggleCollapsedGroup("channels")}
                       selectedChannelId={selectedChannelId}

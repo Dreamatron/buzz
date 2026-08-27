@@ -10,6 +10,7 @@ import {
   isExplicitProject,
   type Project,
 } from "@/features/projects/projectModels";
+import { addProjectToSidebar } from "@/features/projects/lib/projectSidebarMembership";
 import type { Channel } from "@/shared/api/types";
 
 import type { ChannelSection } from "./useChannelSections";
@@ -110,6 +111,7 @@ export function useProjectMoveDestinations({
   channels,
   createSection,
   currentPubkey,
+  relayOrigin,
   relayUrl,
   sections,
 }: {
@@ -117,6 +119,7 @@ export function useProjectMoveDestinations({
   channels: readonly Channel[];
   createSection: (name: string) => ChannelSection | null;
   currentPubkey?: string;
+  relayOrigin: string | null;
   relayUrl?: string;
   sections: readonly ChannelSection[];
 }) {
@@ -139,7 +142,7 @@ export function useProjectMoveDestinations({
 
   const assignChannelToProject = React.useCallback(
     (channelId: string, projectAddress: string) => {
-      if (!currentPubkey || !relayUrl) return;
+      if (!currentPubkey || !relayOrigin || !relayUrl) return;
       const destination = destinations.find(
         (candidate) => candidate.projectAddress === projectAddress,
       );
@@ -152,6 +155,11 @@ export function useProjectMoveDestinations({
         sections,
       });
       if (!section) return;
+      addProjectToSidebar(
+        destination.projectAddress,
+        relayOrigin,
+        currentPubkey,
+      );
       writeChannelProjectFeaturePreferences(
         currentPubkey,
         relayUrl,
@@ -164,6 +172,7 @@ export function useProjectMoveDestinations({
       createSection,
       currentPubkey,
       destinations,
+      relayOrigin,
       relayUrl,
       sections,
     ],

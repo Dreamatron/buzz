@@ -53,6 +53,7 @@ type WidgetLayout = {
 
 type CanvasWidgetDefinition = {
   content: React.ReactNode;
+  hideHeader?: boolean;
   icon: LucideIcon;
   id: ProjectCanvasWidgetId;
   title: string;
@@ -145,18 +146,21 @@ function getDashboardWidgets(
       },
       {
         content: <HomeClockWidget />,
+        hideHeader: true,
         icon: Clock3,
         id: "home-clock",
         title: "Today at home",
       },
       {
         content: <FrontYardCameraWidget />,
+        hideHeader: true,
         icon: Camera,
         id: "front-yard-camera",
         title: "Front yard",
       },
       {
         content: <FamilyLocationsWidget />,
+        hideHeader: true,
         icon: MapPinned,
         id: "family-locations",
         title: "Family locations",
@@ -191,18 +195,21 @@ function getDashboardWidgets(
     return [
       {
         content: <ReleaseNotesWidget />,
+        hideHeader: true,
         icon: ScrollText,
         id: "release-notes",
         title: "Latest release",
       },
       {
         content: <KnownIssuesWidget />,
+        hideHeader: true,
         icon: StickyNote,
         id: "known-issues",
         title: "Known issues",
       },
       {
         content: <SupportBugReporterWidget />,
+        hideHeader: true,
         icon: Bug,
         id: "bug-reporter",
         title: "Bug reporter",
@@ -452,6 +459,7 @@ function ProjectDashboardCanvas({
         {widgets.map((widget) => (
           <ProjectCanvasWidgetFrame
             active={activeWidgetId === widget.id}
+            hideHeader={widget.hideHeader}
             icon={widget.icon}
             id={widget.id}
             key={widget.id}

@@ -1,10 +1,22 @@
 import { Check, GitPullRequest, MessageSquareText } from "lucide-react";
 
-import { ProjectCanvasGloopie } from "../ProjectCanvasGloopie";
+import { ProjectCanvasStackedAlphaGloopie } from "../ProjectCanvasStackedAlphaGloopie";
+
+const REVIEW_GLOOPIES = {
+  Approved: {
+    label: "Approval agent",
+    src: "/project-canvas/review-approved-gloopie.mp4",
+    testId: "project-canvas-review-agent-approved",
+  },
+  Reviewing: {
+    label: "Reviewing agent",
+    src: "/project-canvas/review-working-gloopie.mp4",
+    testId: "project-canvas-review-agent-working",
+  },
+} as const;
 
 const REVIEWS = [
   {
-    author: "Mina",
     branch: "feat/canvas-navigation",
     id: "1",
     number: 2487,
@@ -12,7 +24,6 @@ const REVIEWS = [
     title: "Make project canvases easier to navigate",
   },
   {
-    author: "Owen",
     branch: "fix/reconnect-presence",
     id: "2",
     number: 2491,
@@ -48,6 +59,7 @@ export function ReviewsWidget() {
       <ol className="min-h-0 flex-1 divide-y divide-border/60">
         {REVIEWS.map((review) => {
           const isApproved = review.status === "Approved";
+          const gloopie = REVIEW_GLOOPIES[review.status];
 
           return (
             <li
@@ -55,22 +67,10 @@ export function ReviewsWidget() {
               data-testid={`project-canvas-review-${review.id}`}
               key={review.id}
             >
-              <div className="h-14 w-14 shrink-0 overflow-hidden rounded-md bg-sky-500/10 p-1 ring-1 ring-inset ring-sky-500/15">
-                <ProjectCanvasGloopie />
-              </div>
-
               <div className="min-w-0 flex-1">
-                <div className="flex min-w-0 items-center gap-1.5">
-                  <span className="shrink-0 text-2xs font-semibold tabular-nums text-sky-700 dark:text-sky-300">
-                    PR #{review.number}
-                  </span>
-                  <span aria-hidden="true" className="text-muted-foreground/60">
-                    /
-                  </span>
-                  <span className="truncate text-2xs text-muted-foreground">
-                    {review.author}
-                  </span>
-                </div>
+                <span className="text-2xs font-semibold tabular-nums text-sky-700 dark:text-sky-300">
+                  PR #{review.number}
+                </span>
                 <p className="mt-0.5 truncate text-xs font-semibold">
                   {review.title}
                 </p>
@@ -79,25 +79,41 @@ export function ReviewsWidget() {
                 </p>
               </div>
 
-              <span
-                className={
-                  isApproved
-                    ? "flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-                    : "flex shrink-0 items-center gap-1 rounded-md bg-sky-500/10 px-2 py-1 text-2xs font-semibold text-sky-700 dark:text-sky-300"
-                }
-              >
-                {isApproved ? (
-                  <>
-                    <Check aria-hidden="true" className="h-4 w-4" />
-                    <span className="sr-only">Approved</span>
-                  </>
-                ) : (
-                  <>
-                    <MessageSquareText aria-hidden="true" className="h-3 w-3" />
-                    Reviewing
-                  </>
-                )}
-              </span>
+              <div className="flex shrink-0 items-center gap-1.5">
+                <div
+                  className="h-12 w-10 shrink-0"
+                  data-testid={gloopie.testId}
+                >
+                  <ProjectCanvasStackedAlphaGloopie
+                    ariaLabel={gloopie.label}
+                    sourceTestId={`${gloopie.testId}-source`}
+                    src={gloopie.src}
+                    testId={`${gloopie.testId}-canvas`}
+                  />
+                </div>
+                <span
+                  className={
+                    isApproved
+                      ? "flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                      : "flex shrink-0 items-center gap-1 rounded-md bg-sky-500/10 px-2 py-1 text-2xs font-semibold text-sky-700 dark:text-sky-300"
+                  }
+                >
+                  {isApproved ? (
+                    <>
+                      <Check aria-hidden="true" className="h-4 w-4" />
+                      <span className="sr-only">Approved</span>
+                    </>
+                  ) : (
+                    <>
+                      <MessageSquareText
+                        aria-hidden="true"
+                        className="h-3 w-3"
+                      />
+                      Reviewing
+                    </>
+                  )}
+                </span>
+              </div>
             </li>
           );
         })}

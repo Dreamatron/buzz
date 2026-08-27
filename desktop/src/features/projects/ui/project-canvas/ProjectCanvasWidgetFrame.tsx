@@ -28,6 +28,7 @@ function canStartWidgetDrag(event: React.PointerEvent<HTMLElement>) {
 export function ProjectCanvasWidgetFrame({
   active,
   children,
+  hideHeader = false,
   icon: Icon,
   id,
   onDragStart,
@@ -38,6 +39,7 @@ export function ProjectCanvasWidgetFrame({
 }: {
   active: boolean;
   children: React.ReactNode;
+  hideHeader?: boolean;
   icon: LucideIcon;
   id: string;
   onDragStart: (event: React.PointerEvent<HTMLElement>, id: string) => void;
@@ -86,12 +88,17 @@ export function ProjectCanvasWidgetFrame({
         Use the arrow keys to move this widget. Hold Shift for larger steps.
       </span>
       <div className="flex min-w-0 flex-1 flex-col">
-        <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border/60 px-3">
-          <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
-          <h2 className="min-w-0 flex-1 truncate text-sm font-semibold">
-            {title}
-          </h2>
-        </div>
+        {!hideHeader ? (
+          <div
+            className="flex h-10 shrink-0 items-center gap-2 border-b border-border/60 px-3"
+            data-testid={`project-canvas-widget-${id}-header`}
+          >
+            <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <h2 className="min-w-0 flex-1 truncate text-sm font-semibold">
+              {title}
+            </h2>
+          </div>
+        ) : null}
         <div className="min-h-0 flex-1">{children}</div>
       </div>
     </article>
