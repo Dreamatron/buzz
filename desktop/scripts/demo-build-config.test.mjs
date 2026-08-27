@@ -115,13 +115,19 @@ test("whitespace normalization preserves deterministic identity", () => {
   );
 });
 
+test("maximum-length name produces a Rust-valid 48-byte slug", () => {
+  const config = demoBuildConfig("x".repeat(31), "1234567812345678");
+  assert.equal(config.slug.length, 48);
+  assert.match(config.slug, /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/);
+});
+
 for (const name of [
   "",
   "   ",
   "Workstream/Board",
   "Workstream_Board",
   "équipe",
-  "x".repeat(49),
+  "x".repeat(32),
 ]) {
   test(`rejects unusable name ${JSON.stringify(name)}`, () =>
     assert.throws(() => demoBuildConfig(name, "1234567812345678")));

@@ -92,6 +92,14 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "compiled with BUZZ_BUILD_DEMO_SLUG by the compiled-flags recipe"]
+    fn compiled_demo_slug_matches_expected() {
+        let expected = std::env::var("BUZZ_TEST_EXPECTED_DEMO_SLUG")
+            .expect("BUZZ_TEST_EXPECTED_DEMO_SLUG must be set");
+        assert_eq!(demo_slug(), Some(expected.as_str()));
+    }
+
+    #[test]
     fn ordinary_release_defaults_remain_production_identity() {
         if demo_slug().is_none() {
             assert_eq!(deep_link_scheme(), "buzz");

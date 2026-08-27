@@ -3,7 +3,11 @@ import { writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
 const PRODUCTION_IDENTIFIER = "xyz.block.buzz.app";
-const MAX_DEMO_NAME_LENGTH = 48;
+// The build ID suffix is 17 characters including its separator, and the Rust
+// build contract caps the complete demo slug at 48 ASCII bytes.
+const MAX_DEMO_SLUG_LENGTH = 48;
+const DEMO_BUILD_ID_SUFFIX_LENGTH = 17;
+const MAX_DEMO_NAME_LENGTH = MAX_DEMO_SLUG_LENGTH - DEMO_BUILD_ID_SUFFIX_LENGTH;
 
 export const productionBuildIdentity = Object.freeze({
   productName: "Buzz",
