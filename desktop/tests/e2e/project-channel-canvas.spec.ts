@@ -53,6 +53,8 @@ test("project canvas supports preview, full tab, drag, and fake widget interacti
 
   await page.getByTestId("channel-general").click();
   await expect(page.getByTestId("project-canvas-surface")).toHaveCount(0);
+  await expect(page.getByTestId("project-channel-tabs")).toHaveCount(0);
+  await expect(page.getByTestId("chat-title-tab")).toHaveCount(0);
 
   await page.getByTestId("channel-buzz").click();
   await expect(page.getByTestId("project-channel-home")).toBeVisible();
@@ -61,6 +63,15 @@ test("project canvas supports preview, full tab, drag, and fake widget interacti
   await expect(surface).toHaveAttribute("data-canvas-mode", "preview");
   await expect(page.getByTestId("project-canvas-preview-fade")).toBeVisible();
   await expect(page.getByTestId("project-canvas-show-full")).toBeVisible();
+  const channelTabLabels = await page
+    .getByTestId("project-channel-tabs")
+    .getByRole("tab")
+    .allTextContents();
+  expect(channelTabLabels[0]).toBe("Chat");
+  await expect(page.getByTestId("project-channel-tab-chat")).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
   await expect(page.getByTestId("project-channel-tab-canvas")).toBeVisible();
   await expect(page.getByTestId("channel-composer-overlay")).toBeVisible();
   await expect(
@@ -169,7 +180,7 @@ test("project canvas supports preview, full tab, drag, and fake widget interacti
     "aria-selected",
     "true",
   );
-  await expect(page.getByTestId("chat-title-tab")).toHaveAttribute(
+  await expect(page.getByTestId("project-channel-tab-chat")).toHaveAttribute(
     "aria-selected",
     "false",
   );
@@ -185,6 +196,10 @@ test("project canvas supports preview, full tab, drag, and fake widget interacti
 
   await page.getByTestId("chat-title-tab").click();
   await expect(surface).toHaveAttribute("data-canvas-mode", "preview");
+  await expect(page.getByTestId("project-channel-tab-chat")).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
   await expect(page.getByTestId("project-canvas-show-full")).toBeVisible();
   await expect(page.getByTestId("channel-main-column-body")).toBeVisible();
   await expectPreviewBelowChannelChrome(page);

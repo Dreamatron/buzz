@@ -107,6 +107,7 @@ export function ChatHeader({
   transparentChrome = false,
 }: ChatHeaderProps) {
   const trimmedDescription = description?.trim() ?? "";
+  const titleActsAsTab = Boolean(onTitleClick && !titleNavigation);
 
   async function handleCopyTitle() {
     const value = title.trim();
@@ -132,7 +133,7 @@ export function ChatHeader({
       <div className="flex h-9 min-w-0 items-center gap-2.5">
         <div
           className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden"
-          {...(onTitleClick
+          {...(titleActsAsTab
             ? { "aria-label": "Channel views", role: "tablist" }
             : {})}
         >
@@ -161,14 +162,15 @@ export function ChatHeader({
             >
               {onTitleClick ? (
                 <button
-                  aria-selected={titleActive}
+                  {...(titleActsAsTab
+                    ? { "aria-selected": titleActive, role: "tab" }
+                    : {})}
                   className={cn(
                     "max-w-full truncate rounded-sm outline-hidden transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
-                    !titleActive && "text-muted-foreground",
+                    titleActsAsTab && !titleActive && "text-muted-foreground",
                   )}
                   data-testid="chat-title-tab"
                   onClick={onTitleClick}
-                  role="tab"
                   type="button"
                 >
                   {title}
