@@ -198,6 +198,8 @@ type E2eConfig = {
     pocketVoiceImportResult?: "success" | "cancel" | "invalid";
     /** Advertised HEAD for the first mock project without adding that branch. */
     projectHeadBranch?: string;
+    /** Override the built-in project's display name for project-channel specs. */
+    starterProjectName?: string;
     /** Override the repository access channel for project authorization states. */
     projectAccessChannelId?: string;
     /** Make remote project snapshots fail with this git-facing message. */
@@ -1598,6 +1600,16 @@ function cloneMembers(members: RawChannelMember[]): RawChannelMember[] {
   return members.map((member) => ({ ...member }));
 }
 
+function getEffectiveMockChannelName(
+  channel: MockChannel,
+  config?: E2eConfig,
+): string {
+  if (channel.id === STARTER_PROJECT_HOME_CHANNEL_ID) {
+    return config?.mock?.starterProjectName || channel.name;
+  }
+  return channel.name;
+}
+
 function toRawChannel(
   channel: MockChannel,
   config?: E2eConfig,
@@ -1606,7 +1618,7 @@ function toRawChannel(
 
   return {
     id: channel.id,
-    name: channel.name,
+    name: getEffectiveMockChannelName(channel, config),
     channel_type: channel.channel_type,
     visibility: channel.visibility,
     description: channel.description,
@@ -2378,7 +2390,9 @@ function resetMockRelayAgents(config?: E2eConfig) {
     const channels = mockChannels.filter((channel) => {
       return (
         seed.channelIds?.includes(channel.id) ||
-        seed.channelNames?.includes(channel.name)
+        seed.channelNames?.includes(
+          getEffectiveMockChannelName(channel, config),
+        )
       );
     });
     mockRelayAgents.push({
@@ -2386,7 +2400,9 @@ function resetMockRelayAgents(config?: E2eConfig) {
       owner_pubkey: seed.ownerPubkey ?? null,
       name: seed.name,
       agent_type: seed.agentType ?? "goose",
-      channels: channels.map((channel) => channel.name),
+      channels: channels.map((channel) =>
+        getEffectiveMockChannelName(channel, config),
+      ),
       channel_ids: channels.map((channel) => channel.id),
       capabilities: seed.capabilities ?? ["messages", "channels", "mcp"],
       status: seed.status ?? "online",
@@ -2427,7 +2443,9 @@ function resetMockManagedAgents(config?: E2eConfig) {
     for (const channel of mockChannels) {
       const isSeedChannel =
         seed.channelIds?.includes(channel.id) ||
-        seed.channelNames?.includes(channel.name);
+        seed.channelNames?.includes(
+          getEffectiveMockChannelName(channel, config),
+        );
       if (
         !isSeedChannel ||
         channel.members.some((member) => member.pubkey === seed.pubkey)
@@ -4009,7 +4027,9 @@ function getManagedAgentRelayMembership(pubkey: string) {
 
   return {
     channelIds: memberships.map((channel) => channel.id),
-    channels: memberships.map((channel) => channel.name),
+    channels: memberships.map((channel) =>
+      getEffectiveMockChannelName(channel, getConfig()),
+    ),
   };
 }
 
@@ -4586,7 +4606,8 @@ function prependMockHistory(input: {
   emit?: boolean;
 }) {
   const channel = mockChannels.find(
-    (candidate) => candidate.name === input.channelName,
+    (candidate) =>
+      getEffectiveMockChannelName(candidate, getConfig()) === input.channelName,
   );
   if (!channel) {
     throw new Error(`Unknown mock channel: ${input.channelName}`);
@@ -4615,7 +4636,10 @@ function prependMockHistory(input: {
       [["h", channel.id]],
       ALICE_PUBKEY,
       createdAtStart + offset,
-      `mock-older-${channel.name}-${index}`.replace(/[^a-zA-Z0-9]/g, ""),
+      `mock-older-${getEffectiveMockChannelName(channel, getConfig())}-${index}`.replace(
+        /[^a-zA-Z0-9]/g,
+        "",
+      ),
     );
   });
 
@@ -6021,7 +6045,7 @@ function buildMockProjectEvents(): RelayEvent[] {
         "",
         [
           ["d", "buzz"],
-          ["name", "buzz"],
+          ["name", getConfig()?.mock?.starterProjectName ?? "buzz"],
           ["description", "The complete Buzz community platform."],
           ["a", `${KIND_REPO_ANNOUNCEMENT}:${projectOwner}:buzz`],
           ["a", `${KIND_REPO_ANNOUNCEMENT}:${ALICE_PUBKEY}:relay-tools`],
@@ -9491,7 +9515,9 @@ async function handleSearchMessages(
           kind: event.kind,
           pubkey: event.pubkey,
           channel_id: channelId,
-          channel_name: channel?.name ?? null,
+          channel_name: channel
+            ? getEffectiveMockChannelName(channel, getConfig())
+            : null,
           created_at: event.created_at,
           score: 1,
         });
@@ -10857,7 +10883,8 @@ export function maybeInstallE2eTauriMocks() {
     id,
   }) => {
     const channel = mockChannels.find(
-      (candidate) => candidate.name === channelName,
+      (candidate) =>
+        getEffectiveMockChannelName(candidate, config) === channelName,
     );
     if (!channel) {
       throw new Error(`Mock channel ${channelName} not found.`);
@@ -10884,7 +10911,8 @@ export function maybeInstallE2eTauriMocks() {
     threadHeadId,
   }) => {
     const channel = mockChannels.find(
-      (candidate) => candidate.name === channelName,
+      (candidate) =>
+        getEffectiveMockChannelName(candidate, config) === channelName,
     );
     if (!channel) {
       throw new Error(`Mock channel ${channelName} not found.`);
@@ -10899,7 +10927,8 @@ export function maybeInstallE2eTauriMocks() {
   };
   window.__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__ = ({ channelName, kind }) => {
     const channel = mockChannels.find(
-      (candidate) => candidate.name === channelName,
+      (candidate) =>
+        getEffectiveMockChannelName(candidate, config) === channelName,
     );
     if (!channel) {
       throw new Error(`Mock channel ${channelName} not found.`);

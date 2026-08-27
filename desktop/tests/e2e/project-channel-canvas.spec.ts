@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
+import { waitForAnimations } from "../helpers/animations";
 import { installMockBridge } from "../helpers/bridge";
 
 async function dragBy(
@@ -61,6 +62,7 @@ test("project canvas supports preview, full tab, drag, and fake widget interacti
   const surface = page.getByTestId("project-canvas-surface");
   const canvas = page.getByTestId("project-widget-canvas");
   await expect(surface).toHaveAttribute("data-canvas-mode", "preview");
+  await expect(canvas).toHaveAttribute("data-project-dashboard", "default");
   await expect(page.getByTestId("project-canvas-preview-fade")).toBeVisible();
   await expect(page.getByTestId("project-canvas-show-full")).toBeVisible();
   const channelTabLabels = await page
@@ -160,10 +162,8 @@ test("project canvas supports preview, full tab, drag, and fake widget interacti
   );
   await expect(activeWidget).toHaveAttribute("data-world-x", "48");
   await expect(activeWidget).toHaveAttribute("data-world-y", "24");
-  const activeWidgetDragHandle = page.getByTestId(
-    "project-canvas-widget-active-channels-drag-handle",
-  );
-  await activeWidgetDragHandle.focus();
+  await expect(page.locator('[data-testid$="-drag-handle"]')).toHaveCount(0);
+  await activeWidget.focus();
   await page.keyboard.press("ArrowRight");
   await expect(activeWidget).toHaveAttribute("data-world-x", "72");
   await page.keyboard.press("Shift+ArrowDown");
@@ -186,6 +186,9 @@ test("project canvas supports preview, full tab, drag, and fake widget interacti
   );
   await expect(page.getByTestId("project-canvas-preview-fade")).toHaveCount(0);
   await expect(page.getByTestId("project-canvas-show-full")).toHaveCount(0);
+  await expect(
+    page.getByTestId("project-canvas-preview-boundary"),
+  ).toBeVisible();
   await expect(page.getByTestId("channel-main-column-body")).toBeHidden();
   const fullBox = await surface.boundingBox();
   if (!fullBox) throw new Error("Full project canvas was not visible.");
@@ -196,6 +199,9 @@ test("project canvas supports preview, full tab, drag, and fake widget interacti
 
   await page.getByTestId("chat-title-tab").click();
   await expect(surface).toHaveAttribute("data-canvas-mode", "preview");
+  await expect(page.getByTestId("project-canvas-preview-boundary")).toHaveCount(
+    0,
+  );
   await expect(page.getByTestId("project-channel-tab-chat")).toHaveAttribute(
     "aria-selected",
     "true",
@@ -236,6 +242,105 @@ test("project canvas supports preview, full tab, drag, and fake widget interacti
   await expect(canvas).toHaveAttribute("data-pan-x", "24");
   await expect(canvas).toHaveAttribute("data-pan-y", "24");
 });
+
+for (const namedDashboard of [
+  { dashboard: "home", projectName: "my-home" },
+  { dashboard: "dev", projectName: "my-dev-team" },
+  { dashboard: "support", projectName: "my-support-channel" },
+] as const) {
+  test(`${namedDashboard.projectName} renders its project dashboard`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ height: 900, width: 1728 });
+    await installMockBridge(page, {
+      starterProjectName: namedDashboard.projectName,
+    });
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await page.getByTestId(`channel-${namedDashboard.projectName}`).click();
+    await expect(page.getByTestId("project-channel-home")).toBeVisible();
+    await expect(page.getByTestId("chat-title")).toHaveText(
+      namedDashboard.projectName,
+    );
+
+    const canvas = page.getByTestId("project-widget-canvas");
+    await expect(canvas).toHaveAttribute(
+      "data-project-dashboard",
+      namedDashboard.dashboard,
+    );
+    await page.getByTestId("project-canvas-show-full").click();
+    await expect(
+      page.getByTestId("project-canvas-preview-boundary"),
+    ).toBeVisible();
+    await waitForAnimations(page);
+    await page.screenshot({
+      path: `test-results/project-canvas-${namedDashboard.projectName}-full.png`,
+    });
+
+    if (namedDashboard.dashboard === "home") {
+      await expect(
+        page.getByTestId("project-canvas-chore-board"),
+      ).toBeAttached();
+      await expect(
+        page.getByTestId("project-canvas-home-clock"),
+      ).toBeAttached();
+      await expect(
+        page.getByText(
+          "Sally pickup is earlier than usual, oboe practice cancelled today",
+          { exact: true },
+        ),
+      ).toBeAttached();
+      const camera = page.getByTestId("project-canvas-front-yard-camera-image");
+      await expect(camera).toBeAttached();
+      await expect(
+        page.getByText("📦 Small delivery arrived at 10:35am", {
+          exact: true,
+        }),
+      ).toBeAttached();
+      await expect
+        .poll(() =>
+          camera.evaluate((image) => (image as HTMLImageElement).naturalWidth),
+        )
+        .toBeGreaterThan(0);
+      await expect(
+        page.getByTestId("project-canvas-family-locations"),
+      ).toBeAttached();
+      await expect(
+        page.getByTestId("project-canvas-active-channels"),
+      ).toHaveCount(0);
+    } else if (namedDashboard.dashboard === "dev") {
+      await expect(
+        page.getByTestId("project-canvas-active-channels"),
+      ).toBeAttached();
+      await expect(page.getByTestId("project-canvas-reviews")).toBeAttached();
+      await expect(page.getByText("Reviewing", { exact: true })).toBeAttached();
+      await expect(
+        page.getByTestId("project-canvas-reviews").locator("video"),
+      ).toHaveCount(2);
+      await expect(
+        page.getByTestId("project-canvas-contractor-time-tracking"),
+      ).toBeAttached();
+      await expect(page.getByTestId("project-canvas-chore-board")).toHaveCount(
+        0,
+      );
+    } else {
+      await expect(
+        page.getByTestId("project-canvas-release-notes"),
+      ).toBeAttached();
+      await expect(
+        page.getByTestId("project-canvas-known-issues"),
+      ).toBeAttached();
+      const bugInput = page.getByTestId("project-canvas-support-bug-input");
+      await bugInput.fill("Customer export stalls at 90 percent");
+      await page.getByTestId("project-canvas-support-bug-submit").click();
+      await expect(
+        page.getByTestId("project-canvas-support-bug-success"),
+      ).toBeVisible();
+      await expect(
+        page.getByTestId("project-canvas-active-channels"),
+      ).toHaveCount(0);
+    }
+  });
+}
 
 test("project canvas preview and full tab fit a narrow viewport", async ({
   page,

@@ -334,6 +334,7 @@ export function ProjectChannelHome({
                         <ProjectCanvasSurface
                           full={activeView === "canvas"}
                           onShowFullCanvas={() => selectView("canvas")}
+                          projectNames={[channel.name, project.name]}
                         />
                       ),
                       mainContent,

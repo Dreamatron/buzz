@@ -7,9 +7,11 @@ import { ProjectCanvas } from "./ProjectCanvas";
 export function ProjectCanvasSurface({
   full,
   onShowFullCanvas,
+  projectNames,
 }: {
   full: boolean;
   onShowFullCanvas: () => void;
+  projectNames: readonly string[];
 }) {
   return (
     // The canvas deliberately rejects native file drops before they reach the
@@ -34,8 +36,21 @@ export function ProjectCanvasSurface({
       }}
     >
       <div className="min-h-0 flex-1">
-        <ProjectCanvas />
+        <ProjectCanvas projectNames={projectNames} />
       </div>
+      {full ? (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-x-0 top-56 z-30 flex items-center gap-3 px-3 md:top-64"
+          data-testid="project-canvas-preview-boundary"
+        >
+          <div className="h-px flex-1 border-t border-dotted border-primary/65" />
+          <span className="rounded-sm bg-background/90 px-2 py-0.5 text-3xs font-medium text-muted-foreground shadow-sm backdrop-blur-sm">
+            Chat preview boundary
+          </span>
+          <div className="h-px flex-1 border-t border-dotted border-primary/65" />
+        </div>
+      ) : null}
       {!full ? (
         <>
           <div

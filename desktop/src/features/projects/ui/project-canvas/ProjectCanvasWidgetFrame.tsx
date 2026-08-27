@@ -1,11 +1,11 @@
-import { GripVertical, type LucideIcon } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import type * as React from "react";
 
 import type { ProjectCanvasPoint } from "./projectCanvasLayout";
 
 const INTERACTIVE_WIDGET_SELECTOR = [
   "a",
-  "audio",
+  "audio[controls]",
   "button",
   "iframe",
   "input",
@@ -13,7 +13,7 @@ const INTERACTIVE_WIDGET_SELECTOR = [
   "select",
   "summary",
   "textarea",
-  "video",
+  "video[controls]",
   "[contenteditable='true']",
   "[data-project-canvas-no-drag]",
   "[role='button']",
@@ -48,11 +48,23 @@ export function ProjectCanvasWidgetFrame({
 }) {
   return (
     <article
+      aria-describedby={`project-canvas-widget-${id}-move-instructions`}
       aria-label={`${title} widget`}
-      className="pointer-events-auto absolute flex cursor-grab overflow-hidden rounded-lg border border-border/75 bg-card shadow-lg active:cursor-grabbing"
+      aria-roledescription="movable widget"
+      className="pointer-events-auto absolute flex cursor-grab overflow-hidden rounded-lg border border-border/75 bg-card shadow-lg outline-hidden focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing"
       data-testid={`project-canvas-widget-${id}`}
       data-world-x={position.x}
       data-world-y={position.y}
+      onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) return;
+        const delta = event.shiftKey ? 48 : 24;
+        if (event.key === "ArrowLeft") onNudge(id, { x: -delta, y: 0 });
+        else if (event.key === "ArrowRight") onNudge(id, { x: delta, y: 0 });
+        else if (event.key === "ArrowUp") onNudge(id, { x: 0, y: -delta });
+        else if (event.key === "ArrowDown") onNudge(id, { x: 0, y: delta });
+        else return;
+        event.preventDefault();
+      }}
       onPointerDown={(event) => {
         event.stopPropagation();
         if (canStartWidgetDrag(event)) onDragStart(event, id);
@@ -64,35 +76,21 @@ export function ProjectCanvasWidgetFrame({
         width: size.width,
         zIndex: active ? 20 : 10,
       }}
+      // biome-ignore lint/a11y/noNoninteractiveTabindex: the focused widget surface supports Arrow-key movement without a visible drag handle.
+      tabIndex={0}
     >
+      <span
+        className="sr-only"
+        id={`project-canvas-widget-${id}-move-instructions`}
+      >
+        Use the arrow keys to move this widget. Hold Shift for larger steps.
+      </span>
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border/60 px-3">
           <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
           <h2 className="min-w-0 flex-1 truncate text-sm font-semibold">
             {title}
           </h2>
-          <button
-            aria-label={`Move ${title} widget`}
-            className="flex h-8 w-8 shrink-0 touch-none items-center justify-center rounded-md text-muted-foreground outline-hidden transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing"
-            data-testid={`project-canvas-widget-${id}-drag-handle`}
-            onKeyDown={(event) => {
-              const delta = event.shiftKey ? 48 : 24;
-              if (event.key === "ArrowLeft") onNudge(id, { x: -delta, y: 0 });
-              else if (event.key === "ArrowRight")
-                onNudge(id, { x: delta, y: 0 });
-              else if (event.key === "ArrowUp")
-                onNudge(id, { x: 0, y: -delta });
-              else if (event.key === "ArrowDown")
-                onNudge(id, { x: 0, y: delta });
-              else return;
-              event.preventDefault();
-            }}
-            onPointerDown={(event) => onDragStart(event, id)}
-            title={`Move ${title} widget`}
-            type="button"
-          >
-            <GripVertical className="h-4 w-4" />
-          </button>
         </div>
         <div className="min-h-0 flex-1">{children}</div>
       </div>

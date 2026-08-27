@@ -1,11 +1,17 @@
 import {
   Bug,
+  Camera,
   Clock3,
+  GitPullRequest,
   ListChecks,
   LocateFixed,
+  MapPinned,
   MessageSquareText,
   RadioTower,
+  ScrollText,
+  StickyNote,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import * as React from "react";
 
 import { Button } from "@/shared/ui/button";
@@ -18,46 +24,222 @@ import {
   snapProjectCanvasPoint,
   type ProjectCanvasPoint,
 } from "./projectCanvasLayout";
+import {
+  resolveProjectCanvasDashboard,
+  type ProjectCanvasDashboard,
+} from "./projectCanvasDashboard";
 import { ActiveChannelsWidget } from "./widgets/ActiveChannelsWidget";
 import { BugReporterWidget } from "./widgets/BugReporterWidget";
 import { ChoreBoardWidget } from "./widgets/ChoreBoardWidget";
 import { ContractorTimeTrackingWidget } from "./widgets/ContractorTimeTrackingWidget";
+import { FamilyLocationsWidget } from "./widgets/FamilyLocationsWidget";
+import { FrontYardCameraWidget } from "./widgets/FrontYardCameraWidget";
+import { HomeClockWidget } from "./widgets/HomeClockWidget";
+import { KnownIssuesWidget } from "./widgets/KnownIssuesWidget";
+import { ReleaseNotesWidget } from "./widgets/ReleaseNotesWidget";
+import { ReviewsWidget } from "./widgets/ReviewsWidget";
+import { SupportBugReporterWidget } from "./widgets/SupportBugReporterWidget";
 import { SupportChannelWidget } from "./widgets/SupportChannelWidget";
 
-type ProjectCanvasWidgetId =
-  | "active-channels"
-  | "bug-reporter"
-  | "chores"
-  | "support-channel"
-  | "time-tracking";
+type ProjectCanvasWidgetId = string;
 
 type WidgetLayout = {
   position: ProjectCanvasPoint;
   size: { height: number; width: number };
 };
 
-const INITIAL_WIDGET_LAYOUT: Record<ProjectCanvasWidgetId, WidgetLayout> = {
-  "active-channels": {
-    position: { x: 0, y: 0 },
-    size: { height: 336, width: 336 },
+type CanvasWidgetDefinition = {
+  content: React.ReactNode;
+  icon: LucideIcon;
+  id: ProjectCanvasWidgetId;
+  title: string;
+};
+
+const DASHBOARD_WIDGET_LAYOUTS: Record<
+  ProjectCanvasDashboard,
+  Record<ProjectCanvasWidgetId, WidgetLayout>
+> = {
+  default: {
+    "active-channels": {
+      position: { x: 0, y: 0 },
+      size: { height: 336, width: 336 },
+    },
+    "bug-reporter": {
+      position: { x: 384, y: 24 },
+      size: { height: 264, width: 384 },
+    },
+    chores: {
+      position: { x: 864, y: 0 },
+      size: { height: 360, width: 360 },
+    },
+    "support-channel": {
+      position: { x: 408, y: 336 },
+      size: { height: 360, width: 384 },
+    },
+    "time-tracking": {
+      position: { x: 0, y: 384 },
+      size: { height: 320, width: 360 },
+    },
   },
-  "bug-reporter": {
-    position: { x: 384, y: 24 },
-    size: { height: 264, width: 384 },
+  dev: {
+    "active-channels": {
+      position: { x: 0, y: 0 },
+      size: { height: 336, width: 336 },
+    },
+    reviews: {
+      position: { x: 384, y: 0 },
+      size: { height: 320, width: 456 },
+    },
+    "time-tracking": {
+      position: { x: 888, y: 0 },
+      size: { height: 320, width: 360 },
+    },
   },
-  chores: {
-    position: { x: 864, y: 0 },
-    size: { height: 360, width: 360 },
+  home: {
+    chores: {
+      position: { x: 0, y: 0 },
+      size: { height: 360, width: 360 },
+    },
+    "family-locations": {
+      position: { x: 408, y: 312 },
+      size: { height: 352, width: 456 },
+    },
+    "front-yard-camera": {
+      position: { x: 864, y: 0 },
+      size: { height: 280, width: 384 },
+    },
+    "home-clock": {
+      position: { x: 408, y: 0 },
+      size: { height: 264, width: 408 },
+    },
   },
-  "support-channel": {
-    position: { x: 408, y: 336 },
-    size: { height: 360, width: 384 },
-  },
-  "time-tracking": {
-    position: { x: 0, y: 384 },
-    size: { height: 320, width: 360 },
+  support: {
+    "bug-reporter": {
+      position: { x: 960, y: 24 },
+      size: { height: 280, width: 384 },
+    },
+    "known-issues": {
+      position: { x: 456, y: 0 },
+      size: { height: 360, width: 456 },
+    },
+    "release-notes": {
+      position: { x: 0, y: 0 },
+      size: { height: 320, width: 408 },
+    },
   },
 };
+
+function getDashboardWidgets(
+  dashboard: ProjectCanvasDashboard,
+): CanvasWidgetDefinition[] {
+  if (dashboard === "home") {
+    return [
+      {
+        content: <ChoreBoardWidget />,
+        icon: ListChecks,
+        id: "chores",
+        title: "Chore board",
+      },
+      {
+        content: <HomeClockWidget />,
+        icon: Clock3,
+        id: "home-clock",
+        title: "Today at home",
+      },
+      {
+        content: <FrontYardCameraWidget />,
+        icon: Camera,
+        id: "front-yard-camera",
+        title: "Front yard",
+      },
+      {
+        content: <FamilyLocationsWidget />,
+        icon: MapPinned,
+        id: "family-locations",
+        title: "Family locations",
+      },
+    ];
+  }
+
+  if (dashboard === "dev") {
+    return [
+      {
+        content: <ActiveChannelsWidget />,
+        icon: RadioTower,
+        id: "active-channels",
+        title: "Active channels",
+      },
+      {
+        content: <ReviewsWidget />,
+        icon: GitPullRequest,
+        id: "reviews",
+        title: "Reviews",
+      },
+      {
+        content: <ContractorTimeTrackingWidget />,
+        icon: Clock3,
+        id: "time-tracking",
+        title: "Client time",
+      },
+    ];
+  }
+
+  if (dashboard === "support") {
+    return [
+      {
+        content: <ReleaseNotesWidget />,
+        icon: ScrollText,
+        id: "release-notes",
+        title: "Latest release",
+      },
+      {
+        content: <KnownIssuesWidget />,
+        icon: StickyNote,
+        id: "known-issues",
+        title: "Known issues",
+      },
+      {
+        content: <SupportBugReporterWidget />,
+        icon: Bug,
+        id: "bug-reporter",
+        title: "Bug reporter",
+      },
+    ];
+  }
+
+  return [
+    {
+      content: <ActiveChannelsWidget />,
+      icon: RadioTower,
+      id: "active-channels",
+      title: "Active channels",
+    },
+    {
+      content: <BugReporterWidget />,
+      icon: Bug,
+      id: "bug-reporter",
+      title: "Bug reporter",
+    },
+    {
+      content: <ChoreBoardWidget />,
+      icon: ListChecks,
+      id: "chores",
+      title: "Chore board",
+    },
+    {
+      content: <ContractorTimeTrackingWidget />,
+      icon: Clock3,
+      id: "time-tracking",
+      title: "Client time",
+    },
+    {
+      content: <SupportChannelWidget />,
+      icon: MessageSquareText,
+      id: "support-channel",
+      title: "Support pulse",
+    },
+  ];
+}
 
 type PointerDragOptions = {
   cursor: string;
@@ -114,11 +296,27 @@ function startPointerDrag(
   return cleanup;
 }
 
-export function ProjectCanvas() {
+export function ProjectCanvas({
+  projectNames,
+}: {
+  projectNames: readonly string[];
+}) {
+  const dashboard = resolveProjectCanvasDashboard(projectNames);
+
+  return <ProjectDashboardCanvas dashboard={dashboard} key={dashboard} />;
+}
+
+function ProjectDashboardCanvas({
+  dashboard,
+}: {
+  dashboard: ProjectCanvasDashboard;
+}) {
+  const widgets = getDashboardWidgets(dashboard);
+  const initialWidgetLayout = DASHBOARD_WIDGET_LAYOUTS[dashboard];
   const [translation, setTranslation] = React.useState<ProjectCanvasPoint>(
     PROJECT_CANVAS_HOME_TRANSLATION,
   );
-  const [widgetLayout, setWidgetLayout] = React.useState(INITIAL_WIDGET_LAYOUT);
+  const [widgetLayout, setWidgetLayout] = React.useState(initialWidgetLayout);
   const [activeWidgetId, setActiveWidgetId] =
     React.useState<ProjectCanvasWidgetId | null>(null);
   const [panning, setPanning] = React.useState(false);
@@ -225,10 +423,14 @@ export function ProjectCanvas() {
       aria-label="Project widget canvas"
       className={cn(
         "relative h-full min-h-0 w-full touch-none select-none overflow-hidden bg-muted/35",
+        dashboard === "home" && "bg-rose-50/55 dark:bg-rose-950/15",
+        dashboard === "dev" && "bg-zinc-100/65 dark:bg-zinc-950/35",
+        dashboard === "support" && "bg-amber-50/50 dark:bg-amber-950/10",
         panning ? "cursor-grabbing" : "cursor-grab",
       )}
       data-pan-x={translation.x}
       data-pan-y={translation.y}
+      data-project-dashboard={dashboard}
       data-testid="project-widget-canvas"
       onPointerDown={startCanvasPan}
       style={{
@@ -244,87 +446,44 @@ export function ProjectCanvas() {
           transform: `translate3d(${translation.x}px, ${translation.y}px, 0)`,
         }}
       >
-        <ProjectCanvasWidgetFrame
-          active={activeWidgetId === "active-channels"}
-          icon={RadioTower}
-          id="active-channels"
-          onDragStart={startWidgetDrag}
-          onNudge={nudgeWidget}
-          position={widgetLayout["active-channels"].position}
-          size={widgetLayout["active-channels"].size}
-          title="Active channels"
-        >
-          <ActiveChannelsWidget />
-        </ProjectCanvasWidgetFrame>
-        <ProjectCanvasWidgetFrame
-          active={activeWidgetId === "bug-reporter"}
-          icon={Bug}
-          id="bug-reporter"
-          onDragStart={startWidgetDrag}
-          onNudge={nudgeWidget}
-          position={widgetLayout["bug-reporter"].position}
-          size={widgetLayout["bug-reporter"].size}
-          title="Bug reporter"
-        >
-          <BugReporterWidget />
-        </ProjectCanvasWidgetFrame>
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute h-36 w-28"
-          data-testid="project-canvas-bug-gloopie-companion"
-          data-world-x={
-            widgetLayout["bug-reporter"].position.x +
-            widgetLayout["bug-reporter"].size.width -
-            36
-          }
-          data-world-y={widgetLayout["bug-reporter"].position.y + 72}
-          style={{
-            left:
+        {widgets.map((widget) => (
+          <ProjectCanvasWidgetFrame
+            active={activeWidgetId === widget.id}
+            icon={widget.icon}
+            id={widget.id}
+            key={widget.id}
+            onDragStart={startWidgetDrag}
+            onNudge={nudgeWidget}
+            position={widgetLayout[widget.id].position}
+            size={widgetLayout[widget.id].size}
+            title={widget.title}
+          >
+            {widget.content}
+          </ProjectCanvasWidgetFrame>
+        ))}
+        {dashboard === "default" || dashboard === "support" ? (
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute h-36 w-28"
+            data-testid="project-canvas-bug-gloopie-companion"
+            data-world-x={
               widgetLayout["bug-reporter"].position.x +
               widgetLayout["bug-reporter"].size.width -
-              36,
-            top: widgetLayout["bug-reporter"].position.y + 72,
-            zIndex: activeWidgetId === "bug-reporter" ? 30 : 15,
-          }}
-        >
-          <ProjectCanvasGloopie />
-        </div>
-        <ProjectCanvasWidgetFrame
-          active={activeWidgetId === "chores"}
-          icon={ListChecks}
-          id="chores"
-          onDragStart={startWidgetDrag}
-          onNudge={nudgeWidget}
-          position={widgetLayout.chores.position}
-          size={widgetLayout.chores.size}
-          title="Chore board"
-        >
-          <ChoreBoardWidget />
-        </ProjectCanvasWidgetFrame>
-        <ProjectCanvasWidgetFrame
-          active={activeWidgetId === "time-tracking"}
-          icon={Clock3}
-          id="time-tracking"
-          onDragStart={startWidgetDrag}
-          onNudge={nudgeWidget}
-          position={widgetLayout["time-tracking"].position}
-          size={widgetLayout["time-tracking"].size}
-          title="Client time"
-        >
-          <ContractorTimeTrackingWidget />
-        </ProjectCanvasWidgetFrame>
-        <ProjectCanvasWidgetFrame
-          active={activeWidgetId === "support-channel"}
-          icon={MessageSquareText}
-          id="support-channel"
-          onDragStart={startWidgetDrag}
-          onNudge={nudgeWidget}
-          position={widgetLayout["support-channel"].position}
-          size={widgetLayout["support-channel"].size}
-          title="Support pulse"
-        >
-          <SupportChannelWidget />
-        </ProjectCanvasWidgetFrame>
+              36
+            }
+            data-world-y={widgetLayout["bug-reporter"].position.y + 72}
+            style={{
+              left:
+                widgetLayout["bug-reporter"].position.x +
+                widgetLayout["bug-reporter"].size.width -
+                36,
+              top: widgetLayout["bug-reporter"].position.y + 72,
+              zIndex: activeWidgetId === "bug-reporter" ? 30 : 15,
+            }}
+          >
+            <ProjectCanvasGloopie />
+          </div>
+        ) : null}
       </div>
       <div
         className="absolute right-3 top-3 z-30"
