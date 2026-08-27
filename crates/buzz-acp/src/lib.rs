@@ -2266,7 +2266,7 @@ async fn tokio_main() -> Result<()> {
     } else {
         None
     };
-    let mut typing_channels: HashMap<Uuid, ThreadTags> = HashMap::new();
+    let mut typing_channels: HashMap<scope::SessionScope, ThreadTags> = HashMap::new();
     let mut presence_task: Option<tokio::task::JoinHandle<()>> = None;
 
     // Independent of pool readiness: a never-mentioned lazy agent must still
@@ -2478,10 +2478,10 @@ async fn tokio_main() -> Result<()> {
             // called on relay events or pool results, neither of which
             // arrive when the channel is silent.
             if queue.has_flushable_work() {
-                for (channel_id, thread_tags) in
+                for (scope, thread_tags) in
                     dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity)
                 {
-                    typing_channels.insert(channel_id, thread_tags);
+                    typing_channels.insert(scope, thread_tags);
                 }
             }
         }
@@ -2530,10 +2530,10 @@ async fn tokio_main() -> Result<()> {
         // this, batches requeued during crash recovery sit idle until the
         // next relay event arrives — which can be minutes on quiet channels.
         if respawn_collected {
-            for (channel_id, thread_tags) in
+            for (scope, thread_tags) in
                 dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity)
             {
-                typing_channels.insert(channel_id, thread_tags);
+                typing_channels.insert(scope, thread_tags);
             }
         }
 
@@ -2724,7 +2724,9 @@ async fn tokio_main() -> Result<()> {
                                     // Track removed channels so checked-out agents get
                                     // their sessions stripped when they return to the pool.
                                     removed_channels.insert(ch);
-                                    typing_channels.remove(&ch);
+                                    // Drop every thread scope's typing entry for
+                                    // the removed channel.
+                                    typing_channels.retain(|scope, _| scope.channel_id() != ch);
                                     // Best-effort: clean up 👀 on drained events.
                                     // Note: the relay revokes membership before
                                     // emitting the notification, so this DELETE may
@@ -2796,21 +2798,36 @@ async fn tokio_main() -> Result<()> {
                                 &pubkey_hex,
                             );
                             if is_cancel {
-                                if let Some(owner) = owner_cache.get() {
-                                    if buzz_event.event.pubkey.to_hex() == *owner {
-                                        let fired = signal_in_flight_task(
-                                            &mut pool,
-                                            buzz_event.channel_id,
-                                            ControlSignal::Cancel,
+                                let from_owner = owner_cache.get().is_some_and(|owner| {
+                                    buzz_event.event.pubkey.to_hex() == *owner
+                                });
+                                if from_owner {
+                                    // Scope-exact: an owner's !cancel in thread A
+                                    // must cancel thread A's turn, never a sibling
+                                    // thread running in the same channel. Under
+                                    // the default channel policy the scope is the
+                                    // channel's sole conversation, so this is
+                                    // byte-for-byte the prior behavior.
+                                    let scope = scope::SessionScope::derive(
+                                        config.session_policy,
+                                        buzz_event.channel_id,
+                                        is_dm_channel(buzz_event.channel_id, &ctx.channel_info)
+                                            .await,
+                                        &buzz_event.event,
+                                    );
+                                    let fired = signal_in_flight_task_for_scope(
+                                        &mut pool,
+                                        &scope,
+                                        ControlSignal::Cancel,
+                                    );
+                                    if !fired {
+                                        tracing::warn!(
+                                            channel_id = %buzz_event.channel_id,
+                                            scope = %scope.telemetry_label(),
+                                            "!cancel received but no in-flight task — no-op"
                                         );
-                                        if !fired {
-                                            tracing::warn!(
-                                                channel_id = %buzz_event.channel_id,
-                                                "!cancel received but no in-flight task — no-op"
-                                            );
-                                        }
-                                        continue; // consume event — do NOT push to queue
                                     }
+                                    continue; // consume event — do NOT push to queue
                                 }
                                 // Not from owner — fall through to normal prompt handling.
                             }
@@ -2834,28 +2851,44 @@ async fn tokio_main() -> Result<()> {
                                 &pubkey_hex,
                             );
                             if is_rotate {
-                                if let Some(owner) = owner_cache.get() {
-                                    if buzz_event.event.pubkey.to_hex() == *owner {
-                                        let fired = signal_in_flight_task(
-                                            &mut pool,
-                                            buzz_event.channel_id,
-                                            ControlSignal::Rotate,
+                                let from_owner = owner_cache.get().is_some_and(|owner| {
+                                    buzz_event.event.pubkey.to_hex() == *owner
+                                });
+                                if from_owner {
+                                    // Scope-exact: rotate only the thread the
+                                    // owner's !rotate belongs to. Under the
+                                    // default channel policy the scope is the
+                                    // channel's sole conversation, matching the
+                                    // prior channel-wide rotate.
+                                    let scope = scope::SessionScope::derive(
+                                        config.session_policy,
+                                        buzz_event.channel_id,
+                                        is_dm_channel(buzz_event.channel_id, &ctx.channel_info)
+                                            .await,
+                                        &buzz_event.event,
+                                    );
+                                    let fired = signal_in_flight_task_for_scope(
+                                        &mut pool,
+                                        &scope,
+                                        ControlSignal::Rotate,
+                                    );
+                                    if fired {
+                                        tracing::info!(
+                                            channel_id = %buzz_event.channel_id,
+                                            scope = %scope.telemetry_label(),
+                                            "!rotate received — cancelling in-flight turn and rotating session"
                                         );
-                                        if fired {
-                                            tracing::info!(
-                                                channel_id = %buzz_event.channel_id,
-                                                "!rotate received — cancelling in-flight turn and rotating session"
-                                            );
-                                        } else {
-                                            let invalidated = pool.invalidate_channel_sessions(buzz_event.channel_id);
-                                            tracing::info!(
-                                                channel_id = %buzz_event.channel_id,
-                                                invalidated,
-                                                "!rotate received — invalidated idle channel session(s)"
-                                            );
-                                        }
-                                        continue; // consume event — do NOT push to queue
+                                    } else {
+                                        let invalidated =
+                                            pool.invalidate_scope_session(&scope);
+                                        tracing::info!(
+                                            channel_id = %buzz_event.channel_id,
+                                            scope = %scope.telemetry_label(),
+                                            invalidated,
+                                            "!rotate received — invalidated idle session for scope"
+                                        );
                                     }
+                                    continue; // consume event — do NOT push to queue
                                 }
                                 // Not from owner — fall through to normal prompt handling.
                             }
@@ -3014,10 +3047,10 @@ async fn tokio_main() -> Result<()> {
                                 }
                             }
                             if pool_ready {
-                                for (channel_id, thread_tags) in
+                                for (scope, thread_tags) in
                                     dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity)
                                 {
-                                    typing_channels.insert(channel_id, thread_tags);
+                                    typing_channels.insert(scope, thread_tags);
                                 }
                             }
                         }
@@ -3114,10 +3147,10 @@ async fn tokio_main() -> Result<()> {
                         tracing::debug!("heartbeat_skipped_pool_not_ready");
                     } else if queue.has_flushable_work() {
                         tracing::debug!("heartbeat_skipped_events");
-                        for (channel_id, thread_tags) in
+                        for (scope, thread_tags) in
                             dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity)
                         {
-                            typing_channels.insert(channel_id, thread_tags);
+                            typing_channels.insert(scope, thread_tags);
                         }
                     } else if pool.any_idle() {
                         dispatch_heartbeat(&mut pool, &ctx, &mut heartbeat_in_flight);
@@ -3156,7 +3189,8 @@ async fn tokio_main() -> Result<()> {
                     // Use try_publish (non-blocking) for typing indicators —
                     // they're ephemeral and must not block the main loop during
                     // relay reconnection (#35).
-                    for (&ch, thread_tags) in &typing_channels {
+                    for (scope, thread_tags) in &typing_channels {
+                        let ch = scope.channel_id();
                         if let Ok(event) = relay.build_typing_event(
                             ch,
                             thread_tags.root_event_id.as_deref(),
@@ -3178,9 +3212,11 @@ async fn tokio_main() -> Result<()> {
 
         match pool_event {
             Some(PoolEvent::Result(result)) => {
-                // Stop typing indicator for the completed channel.
-                if let Some(ch) = result.source.channel_id() {
-                    typing_channels.remove(&ch);
+                // Stop the typing indicator for the completed turn's exact scope,
+                // not the whole channel — a sibling thread still running in the
+                // same channel must keep its indicator.
+                if let Some(scope) = result.source.scope() {
+                    typing_channels.remove(scope);
                 }
                 if handle_prompt_result(
                     &mut pool,
@@ -3213,10 +3249,10 @@ async fn tokio_main() -> Result<()> {
                 {
                     break;
                 }
-                for (channel_id, thread_tags) in
+                for (scope, thread_tags) in
                     dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity)
                 {
-                    typing_channels.insert(channel_id, thread_tags);
+                    typing_channels.insert(scope, thread_tags);
                 }
             }
             Some(PoolEvent::Panic(join_error)) => {
@@ -3238,10 +3274,10 @@ async fn tokio_main() -> Result<()> {
                     tracing::error!("all agents dead — exiting");
                     break;
                 }
-                for (channel_id, thread_tags) in
+                for (scope, thread_tags) in
                     dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity)
                 {
-                    typing_channels.insert(channel_id, thread_tags);
+                    typing_channels.insert(scope, thread_tags);
                 }
             }
             Some(PoolEvent::SteerAck(SteerAckEvent {
@@ -3392,10 +3428,10 @@ async fn tokio_main() -> Result<()> {
                 // tear down the in-flight task; on its completion the
                 // queue drains. We still try here in case the in-flight
                 // task has already returned.
-                for (channel_id, thread_tags) in
+                for (scope, thread_tags) in
                     dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity)
                 {
-                    typing_channels.insert(channel_id, thread_tags);
+                    typing_channels.insert(scope, thread_tags);
                 }
             }
             Some(PoolEvent::Wake(attempt, result)) => {
@@ -3420,10 +3456,10 @@ async fn tokio_main() -> Result<()> {
                             "ready",
                             None,
                         );
-                        for (channel_id, thread_tags) in
+                        for (scope, thread_tags) in
                             dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity)
                         {
-                            typing_channels.insert(channel_id, thread_tags);
+                            typing_channels.insert(scope, thread_tags);
                         }
                     }
                     Err(error) => {
@@ -3622,11 +3658,13 @@ fn mode_gate_signal(
 /// Send a control signal to the in-flight task for `channel_id`.
 ///
 /// Channel-targeted: picks the first in-flight task matching the channel. Used
-/// only by the explicitly-deferred channel-level control paths (`!cancel`,
-/// `!rotate`, observer `cancel_turn` / `switch_model`). For per-thread mid-turn
-/// steering/interruption use [`signal_in_flight_task_for_scope`], which targets
-/// one exact [`scope::SessionScope`] so a message in thread A can never
-/// interrupt thread B running in the same channel.
+/// only by the desktop observer control frames (`cancel_turn` / `switch_model`),
+/// which carry a bare `channelId` and no thread context. Every thread-aware
+/// path — mid-turn steering/interruption and the owner `!cancel` / `!rotate`
+/// commands, whose triggering event carries NIP-10 thread tags — uses
+/// [`signal_in_flight_task_for_scope`], which targets one exact
+/// [`scope::SessionScope`] so a signal for thread A can never hit thread B
+/// running in the same channel.
 ///
 /// Returns `true` if a signal was sent, `false` if no in-flight task was found.
 fn signal_in_flight_task(
@@ -3806,7 +3844,10 @@ fn dispatch_pending(
     queue: &mut EventQueue,
     ctx: &Arc<PromptContext>,
     last_activity: &mut tokio::time::Instant,
-) -> Vec<(Uuid, ThreadTags)> {
+) -> Vec<(scope::SessionScope, ThreadTags)> {
+    // Keyed by the exact session scope, not the channel: two threads dispatching
+    // concurrently in one channel get distinct typing entries so completing one
+    // never clears the other's indicator.
     let mut dispatched_channels = Vec::new();
     // Batches held back this cycle because the worker that owns their thread's
     // session is busy. They stay flushed-out of the queue (in-flight) until we
@@ -3910,8 +3951,8 @@ fn dispatch_pending(
         );
         // Record this worker as the scope's session owner so a later dispatch
         // while it is busy holds instead of forking a duplicate session.
-        pool.record_scope_owner(scope, agent_index);
-        dispatched_channels.push((channel_id, typing_scope));
+        pool.record_scope_owner(scope.clone(), agent_index);
+        dispatched_channels.push((scope, typing_scope));
         *last_activity = tokio::time::Instant::now();
     }
     // Release held batches back to the queue (owner busy). They were flushed
@@ -4390,7 +4431,7 @@ fn recover_panicked_agent(
     join_error: tokio::task::JoinError,
     heartbeat_in_flight: &mut bool,
     removed_channels: &HashSet<Uuid>,
-    typing_channels: &mut HashMap<Uuid, ThreadTags>,
+    typing_channels: &mut HashMap<scope::SessionScope, ThreadTags>,
     crash_history: &mut [SlotCircuit],
     respawn_tx: &mpsc::Sender<RespawnResult>,
     respawn_tasks: &mut tokio::task::JoinSet<()>,
@@ -4427,10 +4468,17 @@ fn recover_panicked_agent(
         // in-flight until the ~2h backstop deadline — blocking the batch we
         // just requeued. `meta.scope` is the authoritative in-flight scope.
         match &meta.scope {
-            Some(scope) => queue.mark_complete(scope.clone()),
-            None => queue.mark_complete(ch),
+            Some(scope) => {
+                // Clear the panicked turn's exact scope so a sibling thread in
+                // the same channel keeps its typing indicator.
+                typing_channels.remove(scope);
+                queue.mark_complete(scope.clone());
+            }
+            None => {
+                typing_channels.retain(|scope, _| scope.channel_id() != ch);
+                queue.mark_complete(ch);
+            }
         }
-        typing_channels.remove(&ch);
         tracing::warn!("cleared wedged in-flight channel {ch} from panicked agent {i}");
     } else {
         *heartbeat_in_flight = false;
@@ -4496,7 +4544,7 @@ fn drain_ready_join_results(
     config: &Config,
     heartbeat_in_flight: &mut bool,
     removed_channels: &HashSet<Uuid>,
-    typing_channels: &mut HashMap<Uuid, ThreadTags>,
+    typing_channels: &mut HashMap<scope::SessionScope, ThreadTags>,
     crash_history: &mut [SlotCircuit],
     respawn_tx: &mpsc::Sender<RespawnResult>,
     respawn_tasks: &mut tokio::task::JoinSet<()>,
