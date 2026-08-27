@@ -20,7 +20,7 @@ export function ProjectCanvasSurface({
     <div
       className={cn(
         "relative flex min-h-0 flex-col overflow-hidden bg-background",
-        full ? "flex-1" : "h-56 shrink-0 border-b border-border md:h-64",
+        full ? "flex-1" : "h-84 shrink-0 border-b border-border md:h-96",
       )}
       data-canvas-mode={full ? "full" : "preview"}
       data-testid="project-canvas-surface"
@@ -41,7 +41,7 @@ export function ProjectCanvasSurface({
       {full ? (
         <div
           aria-hidden="true"
-          className="pointer-events-none absolute inset-x-0 top-56 z-30 flex items-center gap-3 px-3 md:top-64"
+          className="pointer-events-none absolute inset-x-0 top-84 z-30 flex items-center gap-3 px-3 md:top-96"
           data-testid="project-canvas-preview-boundary"
         >
           <div className="h-px flex-1 border-t border-dotted border-primary/65" />
@@ -52,26 +52,19 @@ export function ProjectCanvasSurface({
         </div>
       ) : null}
       {!full ? (
-        <>
-          <div
-            aria-hidden="true"
-            className="pointer-events-none absolute inset-x-0 bottom-0 z-20 h-28 bg-gradient-to-b from-transparent via-background/85 to-background"
-            data-testid="project-canvas-preview-fade"
-          />
-          <div className="absolute inset-x-0 bottom-3 z-30 flex justify-center px-4">
-            <Button
-              className="border-border/80 bg-background/95 shadow-sm backdrop-blur-sm"
-              data-testid="project-canvas-show-full"
-              onClick={onShowFullCanvas}
-              size="sm"
-              type="button"
-              variant="outline"
-            >
-              <Maximize2 className="h-4 w-4" />
-              Show full canvas
-            </Button>
-          </div>
-        </>
+        <div className="absolute inset-x-0 bottom-3 z-30 flex justify-center px-4">
+          <Button
+            className="border-border/80 bg-background/95 shadow-sm backdrop-blur-sm"
+            data-testid="project-canvas-show-full"
+            onClick={onShowFullCanvas}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            <Maximize2 className="h-4 w-4" />
+            Show full canvas
+          </Button>
+        </div>
       ) : null}
     </div>
   );

@@ -41,6 +41,9 @@ async function expectPreviewBelowChannelChrome(page: Page) {
   expect(previewBox.y + previewBox.height).toBeLessThanOrEqual(
     chatBox.y + chatBox.height + 1,
   );
+  expect(previewBox.height).toBe(
+    (page.viewportSize()?.width ?? 0) >= 768 ? 384 : 336,
+  );
   expect(
     chatBox.y + chatBox.height - (previewBox.y + previewBox.height),
   ).toBeGreaterThanOrEqual(160);
@@ -63,7 +66,7 @@ test("project canvas supports preview, full tab, drag, and fake widget interacti
   const canvas = page.getByTestId("project-widget-canvas");
   await expect(surface).toHaveAttribute("data-canvas-mode", "preview");
   await expect(canvas).toHaveAttribute("data-project-dashboard", "default");
-  await expect(page.getByTestId("project-canvas-preview-fade")).toBeVisible();
+  await expect(page.getByTestId("project-canvas-preview-fade")).toHaveCount(0);
   await expect(page.getByTestId("project-canvas-show-full")).toBeVisible();
   const channelTabLabels = await page
     .getByTestId("project-channel-tabs")
@@ -184,7 +187,6 @@ test("project canvas supports preview, full tab, drag, and fake widget interacti
     "aria-selected",
     "false",
   );
-  await expect(page.getByTestId("project-canvas-preview-fade")).toHaveCount(0);
   await expect(page.getByTestId("project-canvas-show-full")).toHaveCount(0);
   await expect(
     page.getByTestId("project-canvas-preview-boundary"),
