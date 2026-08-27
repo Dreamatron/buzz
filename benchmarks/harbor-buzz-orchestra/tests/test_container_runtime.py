@@ -372,7 +372,7 @@ async def test_memory_seed_uses_agent_credentials_and_stdin(tmp_path, monkeypatc
 
         async def communicate(self, value):
             captured["value"] = value
-            return b"", b"wrote finance-conventions-7f2a"
+            return b"", b"wrote finance-conventions"
 
     async def create_subprocess_exec(*args, **kwargs):
         captured["args"] = args
@@ -386,7 +386,7 @@ async def test_memory_seed_uses_agent_credentials_and_stdin(tmp_path, monkeypatc
     assert captured["args"][1:] == (
         "mem",
         "set",
-        "finance-conventions-7f2a",
+        "finance-conventions",
         "-",
     )
     assert captured["env"]["BUZZ_PRIVATE_KEY"] == orch.nostr_secret_key

@@ -272,7 +272,7 @@ def test_memory_retrieval_answer_exists_only_in_harness_seed():
     )
 
     assert len(fixture.memory_seeds) == 1
-    assert fixture.memory_seeds[0].slug == "finance-conventions-7f2a"
+    assert fixture.memory_seeds[0].slug == "finance-conventions"
     assert "net_gpv" in fixture.memory_seeds[0].value
     assert "net_gpv" not in instruction
     assert "gross_gpv" not in instruction
