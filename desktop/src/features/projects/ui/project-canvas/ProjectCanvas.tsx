@@ -18,6 +18,7 @@ import { Button } from "@/shared/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { cn } from "@/shared/lib/cn";
 import { ProjectCanvasGloopie } from "./ProjectCanvasGloopie";
+import { ProjectCanvasHenryGloopie } from "./ProjectCanvasHenryGloopie";
 import { ProjectCanvasWidgetFrame } from "./ProjectCanvasWidgetFrame";
 import {
   PROJECT_CANVAS_HOME_TRANSLATION,
@@ -42,6 +43,8 @@ import { SupportBugReporterWidget } from "./widgets/SupportBugReporterWidget";
 import { SupportChannelWidget } from "./widgets/SupportChannelWidget";
 
 type ProjectCanvasWidgetId = string;
+
+const CHORE_GLOOPIE_SIZE = 176;
 
 type WidgetLayout = {
   position: ProjectCanvasPoint;
@@ -101,15 +104,15 @@ const DASHBOARD_WIDGET_LAYOUTS: Record<
       size: { height: 360, width: 360 },
     },
     "family-locations": {
-      position: { x: 408, y: 312 },
+      position: { x: 456, y: 312 },
       size: { height: 352, width: 456 },
     },
     "front-yard-camera": {
-      position: { x: 864, y: 0 },
+      position: { x: 912, y: 0 },
       size: { height: 280, width: 384 },
     },
     "home-clock": {
-      position: { x: 408, y: 0 },
+      position: { x: 456, y: 0 },
       size: { height: 264, width: 408 },
     },
   },
@@ -461,6 +464,31 @@ function ProjectDashboardCanvas({
             {widget.content}
           </ProjectCanvasWidgetFrame>
         ))}
+        {dashboard === "default" || dashboard === "home" ? (
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute"
+            data-testid="project-canvas-chore-gloopie-companion"
+            data-world-x={
+              widgetLayout.chores.position.x +
+              widgetLayout.chores.size.width -
+              CHORE_GLOOPIE_SIZE / 2
+            }
+            data-world-y={widgetLayout.chores.position.y + 32}
+            style={{
+              height: CHORE_GLOOPIE_SIZE,
+              left:
+                widgetLayout.chores.position.x +
+                widgetLayout.chores.size.width -
+                CHORE_GLOOPIE_SIZE / 2,
+              top: widgetLayout.chores.position.y + 32,
+              width: CHORE_GLOOPIE_SIZE,
+              zIndex: activeWidgetId === "chores" ? 30 : 15,
+            }}
+          >
+            <ProjectCanvasHenryGloopie />
+          </div>
+        ) : null}
         {dashboard === "default" || dashboard === "support" ? (
           <div
             aria-hidden="true"

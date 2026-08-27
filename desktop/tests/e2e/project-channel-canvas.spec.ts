@@ -267,19 +267,97 @@ for (const namedDashboard of [
       "data-project-dashboard",
       namedDashboard.dashboard,
     );
+    if (namedDashboard.dashboard === "home") {
+      const previewBox = await page
+        .getByTestId("project-canvas-surface")
+        .boundingBox();
+      const henryBox = await page
+        .getByTestId("project-canvas-chore-gloopie-companion")
+        .boundingBox();
+      if (!previewBox || !henryBox) {
+        throw new Error("Home preview or Henry Gloopie was not visible.");
+      }
+      expect(henryBox.y).toBeGreaterThanOrEqual(previewBox.y);
+      expect(henryBox.y + henryBox.height).toBeLessThanOrEqual(
+        previewBox.y + previewBox.height,
+      );
+    }
     await page.getByTestId("project-canvas-show-full").click();
     await expect(
       page.getByTestId("project-canvas-preview-boundary"),
     ).toBeVisible();
+    if (namedDashboard.dashboard === "home") {
+      await expect(
+        page.getByTestId("project-canvas-chore-gloopie-companion"),
+      ).toBeVisible();
+      await expect
+        .poll(() =>
+          page
+            .getByTestId("project-canvas-henry-gloopie")
+            .evaluate((canvas) => ({
+              height: (canvas as HTMLCanvasElement).height,
+              width: (canvas as HTMLCanvasElement).width,
+            })),
+        )
+        .toEqual({ height: 400, width: 400 });
+    }
     await waitForAnimations(page);
     await page.screenshot({
       path: `test-results/project-canvas-${namedDashboard.projectName}-full.png`,
     });
 
     if (namedDashboard.dashboard === "home") {
+      const choreWidget = page.getByTestId("project-canvas-widget-chores");
+      const henryCompanion = page.getByTestId(
+        "project-canvas-chore-gloopie-companion",
+      );
+      const henryCanvas = page.getByTestId("project-canvas-henry-gloopie");
       await expect(
         page.getByTestId("project-canvas-chore-board"),
       ).toBeAttached();
+      await expect(
+        page.getByTestId("project-canvas-henry-gloopie-source"),
+      ).toHaveAttribute("src", "/project-canvas/henry-hoover-gloopie.mp4");
+      expect(
+        await henryCanvas.evaluate((canvas) => {
+          const context = (canvas as HTMLCanvasElement).getContext("2d");
+          if (!context) return 0;
+          const pixels = context.getImageData(
+            0,
+            0,
+            context.canvas.width,
+            context.canvas.height,
+          ).data;
+          let visiblePixels = 0;
+          for (let index = 3; index < pixels.length; index += 4) {
+            if (pixels[index] > 0) visiblePixels += 1;
+          }
+          return visiblePixels;
+        }),
+      ).toBeGreaterThan(1_000);
+      const choreWidgetBox = await choreWidget.boundingBox();
+      const henryBox = await henryCompanion.boundingBox();
+      if (!choreWidgetBox || !henryBox) {
+        throw new Error("Chore Board or Henry Gloopie was not visible.");
+      }
+      const choreWidgetRight = choreWidgetBox.x + choreWidgetBox.width;
+      expect(henryBox.x).toBeLessThan(choreWidgetRight);
+      expect(henryBox.x + henryBox.width).toBeGreaterThan(choreWidgetRight);
+      expect(choreWidgetRight - henryBox.x).toBeCloseTo(henryBox.width / 2, 0);
+
+      await dragBy(
+        page,
+        choreWidget.getByRole("heading", { name: "Chore board" }),
+        { x: 48, y: 24 },
+      );
+      const movedChoreWidgetBox = await choreWidget.boundingBox();
+      const movedHenryBox = await henryCompanion.boundingBox();
+      expect((movedChoreWidgetBox?.x ?? 0) - choreWidgetBox.x).toBeCloseTo(
+        48,
+        0,
+      );
+      expect((movedHenryBox?.x ?? 0) - henryBox.x).toBeCloseTo(48, 0);
+      expect((movedHenryBox?.y ?? 0) - henryBox.y).toBeCloseTo(24, 0);
       await expect(
         page.getByTestId("project-canvas-home-clock"),
       ).toBeAttached();
