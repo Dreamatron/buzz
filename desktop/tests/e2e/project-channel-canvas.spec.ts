@@ -3,6 +3,39 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { waitForAnimations } from "../helpers/animations";
 import { installMockBridge } from "../helpers/bridge";
 
+const ACTIVE_CHANNEL_MEMBER_PROFILES = [
+  {
+    avatarUrl:
+      'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"%3E%3Crect width="40" height="40" fill="%232563eb"/%3E%3Ccircle cx="20" cy="15" r="7" fill="white"/%3E%3Cpath d="M7 40a13 13 0 0126 0" fill="white"/%3E%3C/svg%3E',
+    displayName: "ThomPeteMain",
+    pubkey: "29ddeb07aec92535a5b38b7ea1d731bc641fd97ffcf59080ab9a2584d3cbe5c6",
+  },
+  {
+    avatarUrl:
+      'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"%3E%3Crect width="40" height="40" fill="%23059669"/%3E%3Ccircle cx="20" cy="15" r="7" fill="white"/%3E%3Cpath d="M7 40a13 13 0 0126 0" fill="white"/%3E%3C/svg%3E',
+    displayName: "Luis Padron",
+    pubkey: "b7fab6a57b4a9e504b8b6a404353f557dc0dec86ef112ef6b3cae0ea9f683561",
+  },
+  {
+    avatarUrl:
+      'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"%3E%3Crect width="40" height="40" fill="%23d97706"/%3E%3Ccircle cx="20" cy="15" r="7" fill="white"/%3E%3Cpath d="M7 40a13 13 0 0126 0" fill="white"/%3E%3C/svg%3E',
+    displayName: "tho",
+    pubkey: "80c5f18be5aafa62cf6198c6335963ba3306b595288117c8ea2f805fc9bdc94a",
+  },
+  {
+    avatarUrl:
+      'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"%3E%3Crect width="40" height="40" fill="%23db2777"/%3E%3Ccircle cx="20" cy="15" r="7" fill="white"/%3E%3Cpath d="M7 40a13 13 0 0126 0" fill="white"/%3E%3C/svg%3E',
+    displayName: "John Tennant",
+    pubkey: "67252b09c31a995daa63aada26569fbc6a3d12f573113f001ce7432f870da820",
+  },
+  {
+    avatarUrl:
+      'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"%3E%3Crect width="40" height="40" fill="%237c3aed"/%3E%3Ccircle cx="20" cy="15" r="7" fill="white"/%3E%3Cpath d="M7 40a13 13 0 0126 0" fill="white"/%3E%3C/svg%3E',
+    displayName: "Morgan Martin",
+    pubkey: "d02a59460cd9333b73730695f0090d54a3bd0fb7840c3e1995a4968eda297047",
+  },
+] as const;
+
 async function openStarterProject(page: Page) {
   const projectRow = page.getByTestId("sidebar-project-buzz");
   if ((await projectRow.count()) === 0) {
@@ -63,7 +96,9 @@ async function expectPreviewBelowChannelChrome(page: Page) {
 test("project canvas supports preview, full tab, drag, and fake widget interactions", async ({
   page,
 }) => {
-  await installMockBridge(page);
+  await installMockBridge(page, {
+    searchProfiles: [...ACTIVE_CHANNEL_MEMBER_PROFILES],
+  });
   await page.goto("/");
 
   await page.getByTestId("channel-general").click();
@@ -148,6 +183,25 @@ test("project canvas supports preview, full tab, drag, and fake widget interacti
   await expect(
     page.getByTestId("project-canvas-active-channel-launch-room-person-2"),
   ).toHaveAttribute("data-activity", "3");
+  for (const profile of ACTIVE_CHANNEL_MEMBER_PROFILES) {
+    const member = page.locator(`[data-pubkey="${profile.pubkey}"]`).first();
+    const avatar = page
+      .getByTestId(`project-canvas-active-member-${profile.pubkey}`)
+      .first();
+    await expect(member).toHaveAttribute("role", "img");
+    await expect(member).toHaveAttribute(
+      "aria-label",
+      new RegExp(`^${profile.displayName}, activity [1-5] of 5$`),
+    );
+    await expect(avatar).toHaveAttribute(
+      "data-testid",
+      `project-canvas-active-member-${profile.pubkey}`,
+    );
+    await expect(avatar.locator("img")).toHaveAttribute(
+      "alt",
+      `${profile.displayName} avatar`,
+    );
+  }
   await expectPreviewBelowChannelChrome(page);
   await expect(canvas).toHaveAttribute("data-pan-x", "24");
   await expect(canvas).toHaveAttribute("data-pan-y", "24");
@@ -268,6 +322,7 @@ for (const namedDashboard of [
   }) => {
     await page.setViewportSize({ height: 900, width: 1728 });
     await installMockBridge(page, {
+      searchProfiles: [...ACTIVE_CHANNEL_MEMBER_PROFILES],
       starterProjectName: namedDashboard.projectName,
     });
     await page.goto("/", { waitUntil: "domcontentloaded" });
@@ -553,6 +608,14 @@ for (const namedDashboard of [
       await expect(
         page.getByTestId("project-canvas-active-channels"),
       ).toBeAttached();
+      for (const profile of ACTIVE_CHANNEL_MEMBER_PROFILES) {
+        await expect(
+          page
+            .getByTestId(`project-canvas-active-member-${profile.pubkey}`)
+            .first()
+            .locator("img"),
+        ).toBeVisible();
+      }
       await expect(page.getByTestId("project-canvas-reviews")).toBeAttached();
       await expect(page.getByText("Reviewing", { exact: true })).toBeAttached();
       const reviewVideos = page
