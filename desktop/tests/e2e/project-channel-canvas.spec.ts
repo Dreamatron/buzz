@@ -657,6 +657,65 @@ for (const namedDashboard of [
       await expect(
         page.getByTestId("project-canvas-contractor-time-tracking"),
       ).toBeAttached();
+      const meetings = page.getByTestId("project-canvas-meetings");
+      await expect(meetings).toBeVisible();
+      await expect(
+        meetings.getByTestId("project-canvas-meeting-previous"),
+      ).toHaveCount(1);
+      await expect(
+        meetings.getByTestId("project-canvas-meeting-upcoming"),
+      ).toHaveCount(2);
+      await expect(
+        meetings.getByText("Weekly product review", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        meetings.getByText("Design crit", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        meetings.getByText("Sprint planning", { exact: true }),
+      ).toBeVisible();
+
+      const meetingsWidget = page.getByTestId("project-canvas-widget-meetings");
+      const meetingsWorldPosition = {
+        x: await meetingsWidget.getAttribute("data-world-x"),
+        y: await meetingsWidget.getAttribute("data-world-y"),
+      };
+      const boundaryBox = await page
+        .getByTestId("project-canvas-preview-boundary")
+        .boundingBox();
+      const meetingsBox = await meetingsWidget.boundingBox();
+      const canvasBox = await canvas.boundingBox();
+      if (!boundaryBox || !meetingsBox || !canvasBox) {
+        throw new Error("Meetings widget or preview boundary was not visible.");
+      }
+      expect(meetingsBox.y).toBeGreaterThan(boundaryBox.y);
+      expect(meetingsBox.y + meetingsBox.height).toBeLessThanOrEqual(
+        canvasBox.y + canvasBox.height,
+      );
+
+      await meetings.getByRole("button", { name: "Notes" }).click();
+      await expect(page.getByTestId("meeting-notes-detail")).toBeVisible();
+      await expect(
+        page.getByRole("heading", { name: "Weekly product review notes" }),
+      ).toBeVisible();
+      await page.getByRole("button", { name: "Close" }).click();
+      await expect(page.getByTestId("meeting-detail-dialog")).toHaveCount(0);
+
+      await meetings.getByRole("button", { name: "Recording" }).click();
+      await expect(page.getByTestId("meeting-recording-detail")).toBeVisible();
+      await page.getByRole("button", { name: "Play recording" }).click();
+      await expect(
+        page.getByRole("button", { name: "Pause recording" }),
+      ).toBeVisible();
+      await page.getByRole("button", { name: "Close" }).click();
+      await expect(meetingsWidget).toHaveAttribute(
+        "data-world-x",
+        meetingsWorldPosition.x ?? "",
+      );
+      await expect(meetingsWidget).toHaveAttribute(
+        "data-world-y",
+        meetingsWorldPosition.y ?? "",
+      );
       await expect(page.getByTestId("project-canvas-chore-board")).toHaveCount(
         0,
       );

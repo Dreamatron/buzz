@@ -1,5 +1,6 @@
 import {
   Bug,
+  CalendarDays,
   Camera,
   Clock3,
   GitPullRequest,
@@ -37,6 +38,7 @@ import { FamilyLocationsWidget } from "./widgets/FamilyLocationsWidget";
 import { FrontYardCameraWidget } from "./widgets/FrontYardCameraWidget";
 import { HomeClockWidget } from "./widgets/HomeClockWidget";
 import { KnownIssuesWidget } from "./widgets/KnownIssuesWidget";
+import { MeetingsWidget } from "./widgets/MeetingsWidget";
 import { ReleaseNotesWidget } from "./widgets/ReleaseNotesWidget";
 import { ReviewsWidget } from "./widgets/ReviewsWidget";
 import { SupportBugReporterWidget } from "./widgets/SupportBugReporterWidget";
@@ -98,6 +100,10 @@ const DASHBOARD_WIDGET_LAYOUTS: Record<
     "time-tracking": {
       position: { x: 888, y: 0 },
       size: { height: 320, width: 360 },
+    },
+    meetings: {
+      position: { x: 336, y: 456 },
+      size: { height: 216, width: 552 },
     },
   },
   home: {
@@ -188,6 +194,12 @@ function getDashboardWidgets(
         icon: Clock3,
         id: "time-tracking",
         title: "Client time",
+      },
+      {
+        content: <MeetingsWidget />,
+        icon: CalendarDays,
+        id: "meetings",
+        title: "Meetings",
       },
     ];
   }
