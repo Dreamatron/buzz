@@ -47,3 +47,17 @@ export function ChannelPaneMainColumn({
     </div>
   );
 }
+
+export function ChannelPaneMainContent() {
+  const mainContent = useChannelViewOverride()?.mainContent;
+  if (!mainContent) return null;
+
+  return (
+    <div
+      className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden pt-(--buzz-channel-content-top-padding,5.75rem)"
+      data-testid="channel-main-content"
+    >
+      {mainContent}
+    </div>
+  );
+}

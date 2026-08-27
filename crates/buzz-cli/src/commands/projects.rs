@@ -123,11 +123,20 @@ pub(crate) async fn fetch_projects_for_channel(
     client: &BuzzClient,
     channel: &str,
 ) -> Result<Vec<Event>, CliError> {
+    fetch_projects_for_channel_bounded(client, channel, PROJECT_QUERY_EVENT_BOUND).await
+}
+
+async fn fetch_projects_for_channel_bounded(
+    client: &BuzzClient,
+    channel: &str,
+    max_events: u32,
+) -> Result<Vec<Event>, CliError> {
     let filter = serde_json::json!({
         "kinds": [KIND_PROJECT],
+        "#buzz-channel": [channel],
     });
     let events: Vec<Event> = client
-        .query_all_bounded(filter, PROJECT_QUERY_EVENT_BOUND)
+        .query_all_bounded(filter, max_events)
         .await?
         .into_iter()
         .map(|event| {
@@ -995,6 +1004,89 @@ mod tests {
 
     const OWNER_HEX: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const OWNER_B_HEX: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+    #[tokio::test]
+    async fn project_lookup_scopes_the_production_query_before_the_global_bound() {
+        use std::sync::{Arc, Mutex};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let channel = "11111111-1111-4111-8111-111111111111";
+        let request_body = Arc::new(Mutex::new(None));
+        let captured_body = request_body.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0; 65_536];
+            let read = socket.read(&mut buf).await.unwrap();
+            let request = String::from_utf8_lossy(&buf[..read]);
+            let body = request.split("\r\n\r\n").nth(1).unwrap().to_owned();
+            *captured_body.lock().unwrap() = Some(body);
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n[]",
+                )
+                .await
+                .unwrap();
+        });
+        let client =
+            crate::client::BuzzClient::new(base_url, nostr::Keys::generate(), None, None).unwrap();
+
+        let projects = fetch_projects_for_channel(&client, channel).await.unwrap();
+        assert!(projects.is_empty());
+        server.await.unwrap();
+        let body: serde_json::Value =
+            serde_json::from_str(request_body.lock().unwrap().as_deref().unwrap()).unwrap();
+        assert_eq!(body[0]["#buzz-channel"], serde_json::json!([channel]));
+        assert_eq!(body[0]["kinds"], serde_json::json!([KIND_PROJECT]));
+    }
+
+    #[tokio::test]
+    async fn channel_scoping_prevents_unrelated_heads_from_consuming_the_bound() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let channel = "11111111-1111-4111-8111-111111111111";
+        let target = build_project("target", None, None, &[], Some(channel), None)
+            .unwrap()
+            .sign_with_keys(&nostr::Keys::generate())
+            .unwrap();
+        let decoy_channel = "22222222-2222-4222-8222-222222222222";
+        let decoys = ["decoy-a", "decoy-b"].map(|slug| {
+            build_project(slug, None, None, &[], Some(decoy_channel), None)
+                .unwrap()
+                .sign_with_keys(&nostr::Keys::generate())
+                .unwrap()
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0; 65_536];
+            let read = socket.read(&mut buf).await.unwrap();
+            let request = String::from_utf8_lossy(&buf[..read]);
+            let body = request.split("\r\n\r\n").nth(1).unwrap();
+            let filter: serde_json::Value = serde_json::from_str(body).unwrap();
+            let response_body = if filter[0]["#buzz-channel"] == serde_json::json!([channel]) {
+                serde_json::to_string(&[target]).unwrap()
+            } else {
+                serde_json::to_string(&decoys).unwrap()
+            };
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response_body}",
+                response_body.len()
+            );
+            socket.write_all(response.as_bytes()).await.unwrap();
+        });
+        let client =
+            crate::client::BuzzClient::new(base_url, nostr::Keys::generate(), None, None).unwrap();
+
+        let projects = fetch_projects_for_channel_bounded(&client, channel, 1)
+            .await
+            .unwrap();
+        server.await.unwrap();
+        assert_eq!(projects.len(), 1);
+        assert_eq!(project_slug(&projects[0]).as_deref(), Some("target"));
+    }
 
     #[test]
     fn project_channel_matching_ignores_unrelated_claims() {

@@ -34,11 +34,16 @@ import {
   AppSidebarPinnedHeader,
   AppSidebarPrimaryMenu,
 } from "@/features/sidebar/ui/AppSidebarPinnedHeader";
-import { MoreUnreadButton } from "@/features/sidebar/ui/MoreUnreadButton";
+import {
+  buildUnreadDmPreviews,
+  MoreUnreadButton,
+  preferredUnreadTarget,
+} from "@/features/sidebar/ui/MoreUnreadButton";
 import {
   ProjectChannelGroup,
   listProjectChannelGroups,
 } from "@/features/sidebar/ui/ProjectChannelGroup";
+import { unreadCountLabel } from "@/shared/ui/UnreadPill";
 import { SidebarSection } from "@/features/sidebar/ui/SidebarSection";
 import {
   ChannelGroupSection,
@@ -151,45 +156,7 @@ export function AppSidebar({
   const scrollRef = React.useRef<HTMLDivElement>(null);
   useSidebarScrollLock(scrollRef);
   // biome-ignore format: keep compact to stay within file size limit
-  const { scrollToNextAbove, scrollToNextBelow, unreadAboveCount, unreadBelowCount, unreadAboveLabel, unreadBelowLabel } = useSidebarActivityOverflow({ activeWorkingByChannelId, previewActivityChannelIds, scrollRef, unreadChannelIds });
-
-  React.useEffect(() => {
-    const scrollElement = scrollRef.current;
-    if (!scrollElement) return;
-
-    const handleWheel = (event: WheelEvent) => {
-      if (event.deltaY === 0) return;
-
-      const maxScrollTop =
-        scrollElement.scrollHeight - scrollElement.clientHeight;
-      if (maxScrollTop <= 0) {
-        event.preventDefault();
-        event.stopPropagation();
-        return;
-      }
-
-      const atTop = scrollElement.scrollTop <= 0;
-      const atBottom = scrollElement.scrollTop >= maxScrollTop - 1;
-      const scrollingPastTop = event.deltaY < 0 && atTop;
-      const scrollingPastBottom = event.deltaY > 0 && atBottom;
-
-      if (scrollingPastTop || scrollingPastBottom) {
-        event.preventDefault();
-        event.stopPropagation();
-        scrollElement.scrollTop = scrollingPastTop ? 0 : maxScrollTop;
-      }
-    };
-
-    scrollElement.addEventListener("wheel", handleWheel, {
-      capture: true,
-      passive: false,
-    });
-    return () => {
-      scrollElement.removeEventListener("wheel", handleWheel, {
-        capture: true,
-      });
-    };
-  }, []);
+  const { scrollToChannel, scrollToNextAbove, scrollToNextBelow, unreadAboveCount, unreadBelowCount, unreadMessageBelowChannelIds, unreadAboveLabel, unreadBelowLabel } = useSidebarActivityOverflow({ activeWorkingByChannelId, previewActivityChannelIds, scrollRef, unreadChannelIds });
 
   const [createDialogKind, setCreateDialogKind] =
     React.useState<CreateChannelKind | null>(null);
@@ -428,6 +395,20 @@ export function AppSidebar({
       ),
     [directMessages, dmChannelLabels, sortModeFor],
   );
+  const unreadDmPreviewsBelow = buildUnreadDmPreviews({
+    channels: directMessages,
+    channelLabels: dmChannelLabels,
+    participantsByChannelId: dmParticipantsByChannelId,
+    unreadChannelIds: unreadMessageBelowChannelIds,
+  });
+  const unreadDmChannelIds = React.useMemo(
+    () => new Set(directMessages.map(({ id }) => id)),
+    [directMessages],
+  );
+  const nextUnreadDmBelowId = preferredUnreadTarget(
+    unreadMessageBelowChannelIds,
+    unreadDmChannelIds,
+  );
   const sidebarLoadingShape = useSidebarLoadingShape({
     activeCommunityId: activeCommunity?.id,
     currentPubkey,
@@ -525,7 +506,7 @@ export function AppSidebar({
           {unreadAboveCount > 0 ? (
             <MoreUnreadButton
               count={unreadAboveCount}
-              label={unreadAboveLabel}
+              label={unreadAboveLabel ?? unreadCountLabel(unreadAboveCount)}
               onClick={scrollToNextAbove}
               position="top"
               testId="sidebar-more-unread-above"
@@ -857,9 +838,15 @@ export function AppSidebar({
             <MoreUnreadButton
               bottomClassName="bottom-full"
               count={unreadBelowCount}
-              label={unreadBelowLabel}
-              onClick={scrollToNextBelow}
+              dmPreviews={unreadDmPreviewsBelow}
+              label={unreadBelowLabel ?? unreadCountLabel(unreadBelowCount)}
+              onClick={() =>
+                nextUnreadDmBelowId
+                  ? scrollToChannel(nextUnreadDmBelowId)
+                  : scrollToNextBelow()
+              }
               position="bottom"
+              targetChannelId={nextUnreadDmBelowId}
               testId="sidebar-more-unread-below"
             />
           ) : null}
