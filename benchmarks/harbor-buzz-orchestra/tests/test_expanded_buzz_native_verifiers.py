@@ -6,6 +6,8 @@ import importlib.util
 from pathlib import Path
 from types import ModuleType
 
+from harbor_buzz_orchestra.task_fixtures import fixture_for
+
 DATASET_ROOT = Path(__file__).resolve().parents[2] / "buzz-dataset"
 AGENT = "a" * 64
 USER = "u" * 64
@@ -236,3 +238,41 @@ def test_ambiguous_user_mention_targets_only_profile_match():
     metrics, _ = verifier.score_evidence(evidence)
     assert metrics["other_not_notified"] == 0.0
     assert metrics["reward"] == 0.0
+
+
+def test_memory_retrieval_requires_correct_threaded_answer():
+    verifier = _verifier("memory-retrieval")
+    evidence = _base("memory-retrieval", "Amelia Rose Bennett")
+    question_id = "memory-question"
+    evidence["task_event_id"] = question_id
+    answer = _message(
+        "answer", "Use the net_gpv column.", reply_to=question_id, mentions=[USER]
+    )
+    evidence["messages"] = [answer]
+
+    metrics, _ = verifier.score_evidence(evidence)
+    assert all(value == 1.0 for value in metrics.values())
+
+    evidence["messages"][0]["content"] = "Use gross_gpv."
+    metrics, _ = verifier.score_evidence(evidence)
+    assert metrics["answer_correct"] == 0.0
+    assert metrics["reward"] == 0.0
+
+    evidence["messages"][0]["content"] = "Use the net_gpv column."
+    evidence["messages"][0]["reply_to_event_id"] = "wrong-question"
+    metrics, _ = verifier.score_evidence(evidence)
+    assert metrics["threaded_reply"] == 0.0
+    assert metrics["reward"] == 0.0
+
+
+def test_memory_retrieval_answer_exists_only_in_harness_seed():
+    fixture = fixture_for("memory-retrieval")
+    instruction = (DATASET_ROOT / "memory-retrieval" / "instruction.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert len(fixture.memory_seeds) == 1
+    assert fixture.memory_seeds[0].slug == "finance-conventions-7f2a"
+    assert "net_gpv" in fixture.memory_seeds[0].value
+    assert "net_gpv" not in instruction
+    assert "gross_gpv" not in instruction

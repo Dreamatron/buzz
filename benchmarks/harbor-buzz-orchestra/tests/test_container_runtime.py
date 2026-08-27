@@ -1,5 +1,6 @@
 """The container runtime must launch the production stack, unmodified."""
 
+import asyncio
 import hashlib
 import json
 import re
@@ -340,6 +341,57 @@ async def test_launch_wires_the_desktop_environment(tmp_path, configured, expect
     assert any(
         target == env["BUZZ_ACP_SYSTEM_PROMPT_FILE"]
         for _, target in environment.uploads
+    )
+
+
+def test_memory_task_disables_auto_memory_injection(tmp_path):
+    manifest = write_manifest(tmp_path)
+    orch = credential("orch-1", "orchestrator", "orch-model")
+    trial = replace(trial_handle((orch,)), task_name="memory-retrieval")
+
+    env = runtime(tmp_path)._agent_env(
+        trial=trial,
+        credential=orch,
+        agent_class=manifest.roster[0],
+        endpoint=EndpointLaunchConfig("anthropic", "ANTHROPIC_API_KEY"),
+        remote_prompt="/prompt.md",
+    )
+
+    assert env["BUZZ_ACP_CHANNELS"] == "channel"
+    assert env["BUZZ_ACP_NO_MEMORY"] == "true"
+
+
+@pytest.mark.asyncio
+async def test_memory_seed_uses_agent_credentials_and_stdin(tmp_path, monkeypatch):
+    orch = credential("orch-1", "orchestrator", "orch-model")
+    trial = replace(trial_handle((orch,)), task_name="memory-retrieval")
+    captured = {}
+
+    class Process:
+        returncode = 0
+
+        async def communicate(self, value):
+            captured["value"] = value
+            return b"", b"wrote finance-conventions-7f2a"
+
+    async def create_subprocess_exec(*args, **kwargs):
+        captured["args"] = args
+        captured["env"] = kwargs["env"]
+        return Process()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_subprocess_exec)
+
+    await runtime(tmp_path)._seed_memories(orch, trial)
+
+    assert captured["args"][1:] == (
+        "mem",
+        "set",
+        "finance-conventions-7f2a",
+        "-",
+    )
+    assert captured["env"]["BUZZ_PRIVATE_KEY"] == orch.nostr_secret_key
+    assert captured["value"] == (
+        b"For GPV calculation, always use the net_gpv column, not the gross_gpv column."
     )
 
 
