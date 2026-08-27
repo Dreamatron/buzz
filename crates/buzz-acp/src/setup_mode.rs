@@ -71,7 +71,6 @@ pub(crate) enum AcpAvailabilityStatus {
 }
 
 use crate::{
-    author_allowed,
     config::Config,
     event_mentions_agent, filter,
     relay::{HarnessRelay, RelayEventPublisher},
@@ -432,17 +431,21 @@ pub(crate) async fn run_setup_listener(config: Config, payload: SetupPayload) ->
         // Apply the same author gate as normal mode so the nudge only goes
         // to authors the real agent would have answered. Same DM hardening:
         // in DMs only owner/siblings get a nudge (fail-closed on unknown type).
-        let author_hex = crate::effective_prompt_author(&buzz_event.event, relay_self.as_deref());
         let is_dm = crate::is_dm_channel(buzz_event.channel_id, &channel_info).await;
-        let allowed = author_allowed(
+        let author_gate = crate::evaluate_inbound_author_gate(
+            &buzz_event.event,
+            crate::WorkflowAuthorContext {
+                relay_self: relay_self.as_deref(),
+                agent_pubkey_hex: &pubkey_hex,
+            },
             &config.respond_to,
             &config.respond_to_allowlist,
-            &author_hex,
             is_dm,
             &owner_cache,
             &rest_client,
         )
         .await;
+        let allowed = author_gate.allowed;
 
         // Apply channel/kind filter rules.
         let filter_matched = filter::match_event(

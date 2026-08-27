@@ -347,6 +347,10 @@ test-unit:
         # `cargo test --workspace`; without this step a manifest edit that
         # diverges Rust from the corpus ships green.
         cargo nextest run -p buzz-agent --lib
+        # ACP author-gate and queue tests protect the trust boundary between
+        # relay events and agent prompts. They are infra-free; ignored lifecycle
+        # tests remain excluded and run in their dedicated integration lanes.
+        cargo nextest run -p buzz-acp --lib
     else
         ./scripts/run-tests.sh unit
     fi
