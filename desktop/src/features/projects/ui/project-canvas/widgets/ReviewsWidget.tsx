@@ -1,16 +1,16 @@
 import { Check, GitPullRequest, MessageSquareText } from "lucide-react";
 
-import { ProjectCanvasStackedAlphaGloopie } from "../ProjectCanvasStackedAlphaGloopie";
+import { ProjectCanvasGloopie } from "../ProjectCanvasGloopie";
 
 const REVIEW_GLOOPIES = {
   Approved: {
+    avatarId: 14,
     label: "Approval agent",
-    src: "/project-canvas/review-approved-gloopie.mp4",
     testId: "project-canvas-review-agent-approved",
   },
   Reviewing: {
+    avatarId: 19,
     label: "Reviewing agent",
-    src: "/project-canvas/review-working-gloopie.mp4",
     testId: "project-canvas-review-agent-working",
   },
 } as const;
@@ -84,11 +84,10 @@ export function ReviewsWidget() {
                   className="h-12 w-10 shrink-0"
                   data-testid={gloopie.testId}
                 >
-                  <ProjectCanvasStackedAlphaGloopie
+                  <ProjectCanvasGloopie
                     ariaLabel={gloopie.label}
-                    sourceTestId={`${gloopie.testId}-source`}
-                    src={gloopie.src}
-                    testId={`${gloopie.testId}-canvas`}
+                    avatarId={gloopie.avatarId}
+                    testId={`${gloopie.testId}-video`}
                   />
                 </div>
                 <span

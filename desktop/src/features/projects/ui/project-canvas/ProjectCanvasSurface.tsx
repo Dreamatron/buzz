@@ -20,7 +20,9 @@ export function ProjectCanvasSurface({
     <div
       className={cn(
         "relative flex min-h-0 flex-col overflow-hidden bg-background",
-        full ? "flex-1" : "h-84 shrink-0 border-b border-border md:h-96",
+        full
+          ? "flex-1"
+          : "h-[25.2rem] shrink-0 border-b border-border md:h-[28.8rem]",
       )}
       data-canvas-mode={full ? "full" : "preview"}
       data-testid="project-canvas-surface"
@@ -41,7 +43,7 @@ export function ProjectCanvasSurface({
       {full ? (
         <div
           aria-hidden="true"
-          className="pointer-events-none absolute inset-x-0 top-84 z-30 flex items-center gap-3 px-3 md:top-96"
+          className="pointer-events-none absolute inset-x-0 top-[25.2rem] z-30 flex items-center gap-3 px-3 md:top-[28.8rem]"
           data-testid="project-canvas-preview-boundary"
         >
           <div className="h-px flex-1 border-t border-dotted border-primary/65" />

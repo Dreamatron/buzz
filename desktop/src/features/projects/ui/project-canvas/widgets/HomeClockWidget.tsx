@@ -1,5 +1,3 @@
-import { ProjectCanvasGloopie } from "../ProjectCanvasGloopie";
-
 const HOME_STATUS_UPDATES = [
   "Sally pickup is earlier than usual, oboe practice cancelled today",
   "Electrician coming between 10am and 5pm, but promises to let us know",
@@ -12,10 +10,18 @@ export function HomeClockWidget() {
       className="relative flex h-full min-h-0 overflow-hidden p-3"
       data-testid="project-canvas-home-clock"
     >
+      <img
+        alt=""
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 size-full object-cover"
+        data-testid="project-canvas-home-clock-background"
+        src="/project-canvas/home-schedule-house.webp"
+      />
+      <div className="pointer-events-none absolute inset-0 bg-linear-to-r from-zinc-950/15 via-zinc-900/20 to-zinc-950/35" />
       <div className="relative z-10 flex min-w-0 flex-1 flex-col">
         <ul
           aria-label="Clock Gloopie updates"
-          className="ml-auto flex w-[78%] min-w-0 flex-1 flex-col justify-center gap-2"
+          className="ml-auto flex w-[82%] min-w-0 flex-1 flex-col justify-center gap-2"
         >
           {HOME_STATUS_UPDATES.map((update, index) => (
             <li
@@ -27,10 +33,6 @@ export function HomeClockWidget() {
             </li>
           ))}
         </ul>
-      </div>
-
-      <div className="pointer-events-none absolute -bottom-2 -left-1 h-28 w-28">
-        <ProjectCanvasGloopie />
       </div>
     </section>
   );

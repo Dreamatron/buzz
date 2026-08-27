@@ -45,6 +45,7 @@ import { SupportChannelWidget } from "./widgets/SupportChannelWidget";
 type ProjectCanvasWidgetId = string;
 
 const CHORE_GLOOPIE_SIZE = 176;
+const HOME_SCHEDULE_GLOOPIE_SIZE = 144;
 
 type WidgetLayout = {
   position: ProjectCanvasPoint;
@@ -100,21 +101,21 @@ const DASHBOARD_WIDGET_LAYOUTS: Record<
     },
   },
   home: {
-    chores: {
-      position: { x: 0, y: 0 },
-      size: { height: 360, width: 360 },
+    "home-clock": {
+      position: { x: 48, y: 0 },
+      size: { height: 264, width: 264 },
     },
     "family-locations": {
-      position: { x: 456, y: 312 },
-      size: { height: 352, width: 456 },
+      position: { x: 336, y: 0 },
+      size: { height: 336, width: 384 },
     },
     "front-yard-camera": {
-      position: { x: 912, y: 0 },
-      size: { height: 280, width: 384 },
+      position: { x: 744, y: 0 },
+      size: { height: 264, width: 264 },
     },
-    "home-clock": {
-      position: { x: 456, y: 0 },
-      size: { height: 264, width: 408 },
+    chores: {
+      position: { x: 1032, y: 0 },
+      size: { height: 336, width: 264 },
     },
   },
   support: {
@@ -495,6 +496,40 @@ function ProjectDashboardCanvas({
             }}
           >
             <ProjectCanvasHenryGloopie />
+          </div>
+        ) : null}
+        {dashboard === "home" ? (
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute"
+            data-testid="project-canvas-home-schedule-gloopie-companion"
+            data-world-x={
+              widgetLayout["home-clock"].position.x -
+              HOME_SCHEDULE_GLOOPIE_SIZE / 2
+            }
+            data-world-y={
+              widgetLayout["home-clock"].position.y +
+              widgetLayout["home-clock"].size.height -
+              HOME_SCHEDULE_GLOOPIE_SIZE / 2
+            }
+            style={{
+              height: HOME_SCHEDULE_GLOOPIE_SIZE,
+              left:
+                widgetLayout["home-clock"].position.x -
+                HOME_SCHEDULE_GLOOPIE_SIZE / 2,
+              top:
+                widgetLayout["home-clock"].position.y +
+                widgetLayout["home-clock"].size.height -
+                HOME_SCHEDULE_GLOOPIE_SIZE / 2,
+              width: HOME_SCHEDULE_GLOOPIE_SIZE,
+              zIndex: activeWidgetId === "home-clock" ? 30 : 15,
+            }}
+          >
+            <ProjectCanvasGloopie
+              ariaLabel="Home schedule helper"
+              avatarId={1}
+              testId="project-canvas-home-schedule-gloopie"
+            />
           </div>
         ) : null}
         {dashboard === "default" || dashboard === "support" ? (

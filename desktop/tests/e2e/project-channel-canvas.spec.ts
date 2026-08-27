@@ -51,12 +51,13 @@ async function expectPreviewBelowChannelChrome(page: Page) {
   expect(previewBox.y + previewBox.height).toBeLessThanOrEqual(
     chatBox.y + chatBox.height + 1,
   );
-  expect(previewBox.height).toBe(
-    (page.viewportSize()?.width ?? 0) >= 768 ? 384 : 336,
+  expect(previewBox.height).toBeCloseTo(
+    (page.viewportSize()?.width ?? 0) >= 768 ? 460.8 : 403.2,
+    0,
   );
   expect(
     chatBox.y + chatBox.height - (previewBox.y + previewBox.height),
-  ).toBeGreaterThanOrEqual(160);
+  ).toBeGreaterThanOrEqual(150);
 }
 
 test("project canvas supports preview, full tab, drag, and fake widget interactions", async ({
@@ -297,16 +298,51 @@ for (const namedDashboard of [
       const previewBox = await page
         .getByTestId("project-canvas-surface")
         .boundingBox();
+      const homeWidgetBoxes = await Promise.all(
+        ["home-clock", "family-locations", "front-yard-camera", "chores"].map(
+          (widgetId) =>
+            page.getByTestId(`project-canvas-widget-${widgetId}`).boundingBox(),
+        ),
+      );
       const henryBox = await page
         .getByTestId("project-canvas-chore-gloopie-companion")
         .boundingBox();
-      if (!previewBox || !henryBox) {
-        throw new Error("Home preview or Henry Gloopie was not visible.");
+      const homeScheduleGloopieBox = await page
+        .getByTestId("project-canvas-home-schedule-gloopie-companion")
+        .boundingBox();
+      if (
+        !previewBox ||
+        !henryBox ||
+        !homeScheduleGloopieBox ||
+        homeWidgetBoxes.some((box) => box === null)
+      ) {
+        throw new Error("Home preview composition was not visible.");
       }
+      for (const box of homeWidgetBoxes) {
+        if (!box) continue;
+        expect(box.y).toBeGreaterThanOrEqual(previewBox.y);
+        expect(box.y + box.height).toBeLessThanOrEqual(
+          previewBox.y + previewBox.height,
+        );
+        expect(box.x).toBeGreaterThanOrEqual(previewBox.x);
+        expect(box.x + box.width).toBeLessThanOrEqual(
+          previewBox.x + previewBox.width,
+        );
+      }
+      const choreBox = homeWidgetBoxes[3];
+      expect(choreBox?.x).toBeGreaterThan(
+        Math.max(...homeWidgetBoxes.slice(0, 3).map((box) => box?.x ?? 0)),
+      );
       expect(henryBox.y).toBeGreaterThanOrEqual(previewBox.y);
       expect(henryBox.y + henryBox.height).toBeLessThanOrEqual(
         previewBox.y + previewBox.height,
       );
+      for (const gloopieBox of [homeScheduleGloopieBox, henryBox]) {
+        expect(gloopieBox.x).toBeGreaterThanOrEqual(previewBox.x);
+        expect(gloopieBox.x + gloopieBox.width).toBeLessThanOrEqual(
+          previewBox.x + previewBox.width,
+        );
+      }
     }
     await page.getByTestId("project-canvas-show-full").click();
     await expect(
@@ -387,6 +423,51 @@ for (const namedDashboard of [
       await expect(
         page.getByTestId("project-canvas-home-clock"),
       ).toBeAttached();
+      const homeClockBackground = page.getByTestId(
+        "project-canvas-home-clock-background",
+      );
+      await expect(homeClockBackground).toHaveAttribute(
+        "src",
+        "/project-canvas/home-schedule-house.webp",
+      );
+      await expect
+        .poll(() =>
+          homeClockBackground.evaluate(
+            (image) => (image as HTMLImageElement).naturalWidth,
+          ),
+        )
+        .toBeGreaterThan(0);
+      const homeClockWidget = page.getByTestId(
+        "project-canvas-widget-home-clock",
+      );
+      const homeScheduleGloopie = page.getByTestId(
+        "project-canvas-home-schedule-gloopie-companion",
+      );
+      await expect(
+        page.getByTestId("project-canvas-home-schedule-gloopie"),
+      ).toHaveAttribute("data-berd-avatar-id", "gloopies-1");
+      const homeClockBox = await homeClockWidget.boundingBox();
+      const homeScheduleGloopieBox = await homeScheduleGloopie.boundingBox();
+      if (!homeClockBox || !homeScheduleGloopieBox) {
+        throw new Error("Home schedule or its Gloopie was not visible.");
+      }
+      expect(homeScheduleGloopieBox.x).toBeLessThan(homeClockBox.x);
+      expect(
+        homeScheduleGloopieBox.x + homeScheduleGloopieBox.width,
+      ).toBeGreaterThan(homeClockBox.x);
+      expect(homeClockBox.x - homeScheduleGloopieBox.x).toBeCloseTo(
+        homeScheduleGloopieBox.width / 2,
+        0,
+      );
+      const homeClockBottom = homeClockBox.y + homeClockBox.height;
+      expect(homeScheduleGloopieBox.y).toBeLessThan(homeClockBottom);
+      expect(
+        homeScheduleGloopieBox.y + homeScheduleGloopieBox.height,
+      ).toBeGreaterThan(homeClockBottom);
+      expect(homeClockBottom - homeScheduleGloopieBox.y).toBeCloseTo(
+        homeScheduleGloopieBox.height / 2,
+        0,
+      );
       await expect(page.getByText("8:42 AM", { exact: true })).toHaveCount(0);
       await expect(
         page.getByText("Tuesday, Aug 27", { exact: true }),
@@ -480,42 +561,36 @@ for (const namedDashboard of [
       await expect(reviewVideos).toHaveCount(2);
       expect(
         await reviewVideos.evaluateAll((videos) =>
-          videos.map((video) =>
-            new URL((video as HTMLVideoElement).currentSrc).pathname
-              .split("/")
-              .pop(),
-          ),
+          videos.map((video) => video.dataset.berdAvatarId),
         ),
-      ).toEqual(["review-approved-gloopie.mp4", "review-working-gloopie.mp4"]);
+      ).toEqual(["gloopies-14", "gloopies-19"]);
+      expect(
+        await page
+          .getByTestId("project-canvas-reviews")
+          .locator("source")
+          .evaluateAll((sources) =>
+            sources.map(
+              (source) => new URL((source as HTMLSourceElement).src).pathname,
+            ),
+          ),
+      ).toEqual([
+        "/avatars/20260821T192222985Z/hevc/gloopies/gloopies-14.mp4",
+        "/avatars/20260821T192222985Z/webm/gloopies/gloopies-14.webm",
+        "/avatars/20260821T192222985Z/hevc/gloopies/gloopies-19.mp4",
+        "/avatars/20260821T192222985Z/webm/gloopies/gloopies-19.webm",
+      ]);
       await expect(
         page.getByTestId("project-canvas-reviews").getByText("Mina"),
       ).toHaveCount(0);
       await expect(
         page.getByTestId("project-canvas-reviews").getByText("Owen"),
       ).toHaveCount(0);
-      for (const status of ["approved", "working"]) {
-        await expect
-          .poll(() =>
-            page
-              .getByTestId(`project-canvas-review-agent-${status}-canvas`)
-              .evaluate((canvas) => {
-                const context = (canvas as HTMLCanvasElement).getContext("2d");
-                if (!context) return 0;
-                const pixels = context.getImageData(
-                  0,
-                  0,
-                  context.canvas.width,
-                  context.canvas.height,
-                ).data;
-                let visiblePixels = 0;
-                for (let index = 3; index < pixels.length; index += 4) {
-                  if (pixels[index] > 0) visiblePixels += 1;
-                }
-                return visiblePixels;
-              }),
-          )
-          .toBeGreaterThan(500);
-      }
+      await expect(
+        page.getByTestId("project-canvas-review-agent-approved-video"),
+      ).toHaveAttribute("poster", /gloopies-14\.png$/);
+      await expect(
+        page.getByTestId("project-canvas-review-agent-working-video"),
+      ).toHaveAttribute("poster", /gloopies-19\.png$/);
       await expect(
         page.getByTestId("project-canvas-contractor-time-tracking"),
       ).toBeAttached();
