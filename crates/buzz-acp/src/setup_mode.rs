@@ -435,8 +435,7 @@ pub(crate) async fn run_setup_listener(config: Config, payload: SetupPayload) ->
         // in DMs only owner/siblings get a nudge (fail-closed on unknown type).
         let author_gate = author_gate_ctx
             .evaluate_listener_event(
-                &buzz_event.event,
-                buzz_event.channel_id,
+                &buzz_event,
                 &config.respond_to,
                 &config.respond_to_allowlist,
                 &owner_cache,

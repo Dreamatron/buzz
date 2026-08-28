@@ -350,7 +350,6 @@ mod inbound_author_gate {
         relay, InboundAuthorGateDecision, OwnerCache, RespondTo,
     };
     use std::collections::HashSet;
-    use uuid::Uuid;
 
     /// Apply the configured raw-author policy after trusted workflow attribution.
     ///
@@ -446,17 +445,16 @@ mod inbound_author_gate {
         /// listener call with raw-signer authorization is not expressible.
         pub(crate) async fn evaluate_listener_event(
             &self,
-            event: &nostr::Event,
-            channel_id: Uuid,
+            buzz_event: &relay::BuzzEvent,
             respond_to: &RespondTo,
             allowlist: &HashSet<String>,
             owner_cache: &OwnerCache,
             channel_info: &pool::ChannelInfoResolver,
             rest_client: &relay::RestClient,
         ) -> InboundAuthorGateDecision {
-            let is_dm = is_dm_channel(channel_id, channel_info).await;
+            let is_dm = is_dm_channel(buzz_event.channel_id, channel_info).await;
             self.evaluate_with_channel_trust(
-                event,
+                &buzz_event.event,
                 respond_to,
                 allowlist,
                 is_dm,
@@ -3149,8 +3147,7 @@ async fn tokio_main() -> Result<()> {
                             // it never revokes same-owner team bots.
                             let author_gate = author_gate_ctx
                                 .evaluate_listener_event(
-                                    &buzz_event.event,
-                                    buzz_event.channel_id,
+                                    &buzz_event,
                                     &config.respond_to,
                                     &config.respond_to_allowlist,
                                     &owner_cache,
@@ -6089,10 +6086,10 @@ mod author_gate_tests {
             )]),
             rest_client.clone(),
         );
+        let buzz_event = relay::BuzzEvent { channel_id, event };
         let decision = gate
             .evaluate_listener_event(
-                &event,
-                channel_id,
+                &buzz_event,
                 &RespondTo::OwnerOnly,
                 &HashSet::new(),
                 &cache,
