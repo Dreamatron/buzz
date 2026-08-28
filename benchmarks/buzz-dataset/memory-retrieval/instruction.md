@@ -1,1 +1,1 @@
-What column should be used for revenue calculation? Reply with `use <column_name>`.
+How many total customers did we have in April 2024?

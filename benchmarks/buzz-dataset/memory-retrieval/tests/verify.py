@@ -9,16 +9,22 @@ import re
 from pathlib import Path
 from typing import Any
 
-EXPECTED_COLUMN = "net_gpv_var_usd"
-EXPECTED_COLUMN_MENTION = re.compile(rf"\b{EXPECTED_COLUMN}\b")
-USE_EXPECTED_COLUMN = re.compile(rf"\buse\s+{EXPECTED_COLUMN}\b")
-REJECT_EXPECTED_COLUMN = re.compile(
-    rf"\b(?:do|should|must|would|could|can)(?:\s+\w+){{0,2}}\s+not\s+use\s+{EXPECTED_COLUMN}\b"
-    rf"|\b(?:don't|shouldn't|mustn't|wouldn't|couldn't|can't|never|not)\s+use\s+{EXPECTED_COLUMN}\b"
-    rf"|\buse\s+gross_gpv\b[^.!?\n]*(?:instead\s+of|rather\s+than)\s+{EXPECTED_COLUMN}\b"
-    rf"|\b(?:gross_gpv\b[^.!?\n]*,?\s*)?not\s+{EXPECTED_COLUMN}\b"
-    rf"|\b{EXPECTED_COLUMN}\b[^.!?\n]{{0,24}}\b(?:incorrect|wrong)\b"
+EXPECTED_CUSTOMERS = 352_345
+ALLOWED_CONTEXT_NUMBERS = frozenset({2024})
+# Numbers that appear only in the distractor memories. Mentioning any of them
+# means the answer pulled from the wrong memory (or dumped several), so it does
+# not demonstrate that the correct value was selected.
+DISTRACTOR_NUMBERS = frozenset(
+    {
+        361_250,  # total-customers-per-month: monthly average
+        351_340,  # customer-value-metric: last month's customers
+        2_400,  # customer-value-metric: revenue per customer
+        325_401,  # customers-metrics-spring-24: March total
+        3_710,  # customers-metrics-spring-24: April active customers named John
+        21_604,  # new-customers-april-2024: April new customers
+    }
 )
+NUMBER = re.compile(r"(?<![A-Za-z0-9_])-?\d[\d,]*(?:\.\d+)?")
 
 
 def _zero() -> dict[str, float]:
@@ -30,11 +36,14 @@ def _zero() -> dict[str, float]:
     }
 
 
-def _normalize_answer(content: str) -> str:
-    """Normalize harmless presentation differences without changing meaning."""
-    normalized = content.strip().casefold().replace("`", "").replace("’", "'")
-    normalized = re.sub(r"\s+", " ", normalized)
-    return normalized.rstrip(".!?").rstrip()
+def _numbers(content: str) -> list[float]:
+    values: list[float] = []
+    for token in NUMBER.findall(content):
+        try:
+            values.append(float(token.replace(",", "")))
+        except ValueError:
+            continue
+    return values
 
 
 def score_evidence(evidence: object) -> tuple[dict[str, float], dict[str, Any]]:
@@ -67,16 +76,15 @@ def score_evidence(evidence: object) -> tuple[dict[str, float], dict[str, Any]]:
     ]
     answer = replies[-1] if replies else None
     content = str(answer.get("content", "")) if answer else ""
-    normalized_answer = _normalize_answer(content)
-    rejects_expected_column = bool(REJECT_EXPECTED_COLUMN.search(normalized_answer))
-    if rejects_expected_column:
-        answer_correct = 0.0
-    elif USE_EXPECTED_COLUMN.search(normalized_answer):
-        answer_correct = 1.0
-    elif EXPECTED_COLUMN_MENTION.search(normalized_answer):
-        answer_correct = 0.5
-    else:
-        answer_correct = 0.0
+    values = _numbers(content)
+    mentions_expected = any(value == EXPECTED_CUSTOMERS for value in values)
+    mentions_distractor = any(value in DISTRACTOR_NUMBERS for value in values)
+    noise_numbers = [
+        value
+        for value in values
+        if value != EXPECTED_CUSTOMERS and value not in ALLOWED_CONTEXT_NUMBERS
+    ]
+    answer_correct = float(mentions_expected and not noise_numbers)
     threaded_reply = float(answer is not None)
     evidence_complete = float(
         evidence.get("schema_version") == 1
@@ -99,8 +107,13 @@ def score_evidence(evidence: object) -> tuple[dict[str, float], dict[str, Any]]:
         "question_channel_id": question_channel,
         "answer_message_id": answer.get("id") if answer else None,
         "answer_content": content,
-        "normalized_answer": normalized_answer,
-        "rejects_expected_column": rejects_expected_column,
+        "parsed_numbers": values,
+        "expected_customers": EXPECTED_CUSTOMERS,
+        "mentions_expected": mentions_expected,
+        "mentions_distractor": mentions_distractor,
+        "noise_numbers": noise_numbers,
+        "allowed_context_numbers": sorted(ALLOWED_CONTEXT_NUMBERS),
+        "distractor_numbers": sorted(DISTRACTOR_NUMBERS),
     }
 
 

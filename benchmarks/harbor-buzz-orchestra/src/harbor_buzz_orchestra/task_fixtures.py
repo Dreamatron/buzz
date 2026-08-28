@@ -171,36 +171,33 @@ _AMBIGUOUS_USER_MENTION_FIXTURE = BuzzTaskFixture(
     requires_evidence=True,
 )
 
+
+# Noisy memories test retrieval of one relevant value through `buzz mem ls/get`.
 _MEMORY_RETRIEVAL_FIXTURE = BuzzTaskFixture(
     user_display_name="Amelia Rose Bennett",
     memory_seeds=(
         MemorySeed(
-            slug="finance-vs-marketing",
+            slug="total-customers-per-month",
+            value="We average 361,250 customers per month.",
+        ),
+        MemorySeed(
+            slug="customer-value-metric",
+            value="Last month we had 351,340 customers with a $2400 revenue per customer",
+        ),
+        MemorySeed(
+            slug="customers-metrics-spring-24",
             value=(
-                "Finance measures all metrics in quarters; marketing measures all "
-                "metrics monthly."
+                "In March, we had 325,401 total customers. In April, we had "
+                "3,710 active customers named John."
             ),
         ),
         MemorySeed(
-            slug="finance-conventions",
-            value=(
-                "For revenue metrics, always use the net_gpv_var_usd column, not the "
-                "gross_gpv column."
-            ),
+            slug="new-customers-april-2024",
+            value="There are 21,604 new customers in April 2024.",
         ),
         MemorySeed(
-            slug="timezone-calculation",
-            value=(
-                "Always adjust timezone fields like created_at and payment_at from "
-                "UTC to PST."
-            ),
-        ),
-        MemorySeed(
-            slug="revenue-metric-formatting",
-            value=(
-                "Round revenue to the nearest billion. Include a $ when using the "
-                "gross_gpv_fxd_usd column."
-            ),
+            slug="total-customers-metric",
+            value="In April 2024, we had 352,345 total customers.",
         ),
     ),
     requires_evidence=True,

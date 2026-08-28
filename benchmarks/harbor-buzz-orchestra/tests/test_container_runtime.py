@@ -375,7 +375,7 @@ async def test_memory_seed_uses_agent_credentials_and_stdin(tmp_path, monkeypatc
 
         async def communicate(self, value):
             self.invocation["value"] = value
-            return b"", b"wrote finance-conventions"
+            return b"", b"wrote memory"
 
     async def create_subprocess_exec(*args, **kwargs):
         invocation = {"args": args, "env": kwargs["env"]}

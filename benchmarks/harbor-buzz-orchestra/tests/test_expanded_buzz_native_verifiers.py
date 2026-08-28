@@ -246,39 +246,62 @@ def test_memory_retrieval_requires_correct_threaded_answer():
     question_id = "memory-question"
     evidence["task_event_id"] = question_id
     answer = _message(
-        "answer", "Use `net_gpv_var_usd`.", reply_to=question_id, mentions=[USER]
+        "answer",
+        "We had 352,345 total customers in April 2024.",
+        reply_to=question_id,
+        mentions=[USER],
     )
     evidence["messages"] = [answer]
 
     for correct_answer in (
-        "You should use net_gpv_var_usd",
-        "use net_gpv_var_usd",
-        "please use net_gpv_var_usd",
-        "Use `net_gpv_var_usd`.",
+        "352,345",
+        "We had 352,345 total customers in April 2024.",
+        "April 2024 total customers: 352345",
     ):
         evidence["messages"][0]["content"] = correct_answer
         metrics, _ = verifier.score_evidence(evidence)
         assert all(value == 1.0 for value in metrics.values())
 
-    evidence["messages"][0]["content"] = "net_gpv_var_usd"
-    metrics, _ = verifier.score_evidence(evidence)
-    assert metrics["answer_correct"] == 0.5
-    assert metrics["reward"] == 0.5
-
-    for contradictory_answer in (
-        "Use gross_gpv.",
-        "You should not use net_gpv_var_usd.",
-        "Do not use net_gpv_var_usd; use gross_gpv.",
-        "Use gross_gpv instead of net_gpv_var_usd.",
-        "net_gpv_var_usd is incorrect.",
-        "gross_gpv, not net_gpv_var_usd.",
+    for answer_without_exact_total in (
+        "361,250",
+        "351,340",
+        "$2,400 revenue per customer",
+        "325,401",
+        "3,710",
+        "21,604",
+        "352,344",
+        "352,346",
+        "352,000",
+        "About 352 thousand",
+        "Approximately 352.3 thousand",
     ):
-        evidence["messages"][0]["content"] = contradictory_answer
+        evidence["messages"][0]["content"] = answer_without_exact_total
         metrics, _ = verifier.score_evidence(evidence)
         assert metrics["answer_correct"] == 0.0
         assert metrics["reward"] == 0.0
 
-    evidence["messages"][0]["content"] = "Use net_gpv_var_usd."
+    for distractor in verifier.DISTRACTOR_NUMBERS:
+        evidence["messages"][0]["content"] = (
+            f"We had 352,345 total customers. Another relevant count was {distractor:,}."
+        )
+        metrics, details = verifier.score_evidence(evidence)
+        assert details["mentions_expected"] is True
+        assert details["mentions_distractor"] is True
+        assert metrics["answer_correct"] == 0.0
+        assert metrics["reward"] == 0.0
+
+    for noise_count in (352_000, 999_999):
+        evidence["messages"][0]["content"] = (
+            f"We had 352,345 total customers, approximately {noise_count:,}."
+        )
+        metrics, details = verifier.score_evidence(evidence)
+        assert details["mentions_expected"] is True
+        assert details["mentions_distractor"] is False
+        assert details["noise_numbers"] == [float(noise_count)]
+        assert metrics["answer_correct"] == 0.0
+        assert metrics["reward"] == 0.0
+
+    evidence["messages"][0]["content"] = "352,345"
     evidence["messages"][0]["reply_to_event_id"] = "wrong-question"
     metrics, _ = verifier.score_evidence(evidence)
     assert metrics["answer_correct"] == 0.0
@@ -287,6 +310,7 @@ def test_memory_retrieval_requires_correct_threaded_answer():
 
 
 def test_memory_retrieval_answer_exists_only_in_harness_seed():
+    verifier = _verifier("memory-retrieval")
     fixture = fixture_for("memory-retrieval")
     instruction = (DATASET_ROOT / "memory-retrieval" / "instruction.md").read_text(
         encoding="utf-8"
@@ -294,13 +318,22 @@ def test_memory_retrieval_answer_exists_only_in_harness_seed():
 
     seeds = {seed.slug: seed.value for seed in fixture.memory_seeds}
     assert set(seeds) == {
-        "finance-vs-marketing",
-        "finance-conventions",
-        "timezone-calculation",
-        "revenue-metric-formatting",
+        "total-customers-per-month",
+        "customer-value-metric",
+        "customers-metrics-spring-24",
+        "new-customers-april-2024",
+        "total-customers-metric",
     }
-    assert "net_gpv_var_usd" in seeds["finance-conventions"]
-    assert sum("net_gpv_var_usd" in value for value in seeds.values()) == 1
-    assert "net_gpv_var_usd" not in instruction
-    assert "gross_gpv" not in instruction
-    assert "gpv" not in instruction.casefold()
+    assert "352,345" in seeds["total-customers-metric"]
+    assert sum("352,345" in value for value in seeds.values()) == 1
+    seeded_distractors = frozenset(
+        number
+        for slug, value in seeds.items()
+        if slug != "total-customers-metric"
+        for number in verifier._numbers(value)
+        if number != 2024
+    )
+    assert verifier.EXPECTED_CUSTOMERS == 352_345
+    assert verifier.DISTRACTOR_NUMBERS == seeded_distractors
+    assert "352,345" not in instruction
+    assert "352345" not in instruction.replace(",", "")
