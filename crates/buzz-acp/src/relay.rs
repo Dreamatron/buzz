@@ -1312,8 +1312,15 @@ impl BgState {
             return;
         };
         if let Some(event) = self.observer_in_flight.remove(index) {
+            if self.gated_observer_pending.len() >= GATED_OBSERVER_QUEUE_CAP {
+                self.gated_observer_pending.pop_front();
+                self.gated_observer_dropped += 1;
+                warn!(
+                    dropped_total = self.gated_observer_dropped,
+                    "gated observer queue full — dropped oldest parked frame for refused retry"
+                );
+            }
             self.gated_observer_pending.push_front(event);
-            self.trim_gated_observer_pending();
         }
     }
 
@@ -6031,6 +6038,37 @@ mod tests {
             [still_pending.id],
             "frames still awaiting their own verdict must stay in flight"
         );
+    }
+
+    #[test]
+    fn rejected_observer_frame_displaces_oldest_parked_frame_at_capacity() {
+        let mut state = BgState::new();
+        let keys = Keys::generate();
+        let refused = make_observer_frame(&keys);
+        state.track_observer_in_flight(Box::new(refused.clone()));
+
+        let oldest = make_observer_frame(&keys);
+        state.park_gated_observer_frame(Box::new(oldest.clone()));
+        let mut survivors = Vec::with_capacity(GATED_OBSERVER_QUEUE_CAP - 1);
+        for _ in 1..GATED_OBSERVER_QUEUE_CAP {
+            let event = make_observer_frame(&keys);
+            survivors.push(event.id);
+            state.park_gated_observer_frame(Box::new(event));
+        }
+
+        state.requeue_rejected_observer_frame(&refused.id.to_hex());
+
+        let parked: Vec<_> = state
+            .gated_observer_pending
+            .iter()
+            .map(|event| event.id)
+            .collect();
+        assert_eq!(parked.len(), GATED_OBSERVER_QUEUE_CAP);
+        assert_eq!(parked.first(), Some(&refused.id));
+        assert_eq!(&parked[1..], survivors.as_slice());
+        assert!(!parked.contains(&oldest.id));
+        assert_eq!(state.gated_observer_dropped, 1);
+        assert!(state.observer_in_flight.is_empty());
     }
 
     /// A non-rate-limit refusal is terminal: retrying would be refused
