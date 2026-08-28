@@ -365,34 +365,33 @@ def test_memory_task_disables_auto_memory_injection(tmp_path):
 async def test_memory_seed_uses_agent_credentials_and_stdin(tmp_path, monkeypatch):
     orch = credential("orch-1", "orchestrator", "orch-model")
     trial = replace(trial_handle((orch,)), task_name="memory-retrieval")
-    captured = {}
+    captured = []
 
     class Process:
+        def __init__(self, invocation):
+            self.invocation = invocation
+
         returncode = 0
 
         async def communicate(self, value):
-            captured["value"] = value
+            self.invocation["value"] = value
             return b"", b"wrote finance-conventions"
 
     async def create_subprocess_exec(*args, **kwargs):
-        captured["args"] = args
-        captured["env"] = kwargs["env"]
-        return Process()
+        invocation = {"args": args, "env": kwargs["env"]}
+        captured.append(invocation)
+        return Process(invocation)
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", create_subprocess_exec)
 
     await runtime(tmp_path)._seed_memories(orch, trial)
 
-    assert captured["args"][1:] == (
-        "mem",
-        "set",
-        "finance-conventions",
-        "-",
-    )
-    assert captured["env"]["BUZZ_PRIVATE_KEY"] == orch.nostr_secret_key
-    assert captured["value"] == (
-        b"For GPV calculation, always use the net_gpv column, not the gross_gpv column."
-    )
+    seeds = fixture_for("memory-retrieval").memory_seeds
+    assert len(captured) == len(seeds)
+    for invocation, seed in zip(captured, seeds, strict=True):
+        assert invocation["args"][1:] == ("mem", "set", seed.slug, "-")
+        assert invocation["env"]["BUZZ_PRIVATE_KEY"] == orch.nostr_secret_key
+        assert invocation["value"] == seed.value.encode()
 
 
 def test_runtime_validates_construction_bounds(tmp_path):

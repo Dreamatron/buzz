@@ -175,10 +175,31 @@ _MEMORY_RETRIEVAL_FIXTURE = BuzzTaskFixture(
     user_display_name="Amelia Rose Bennett",
     memory_seeds=(
         MemorySeed(
+            slug="finance-vs-marketing",
+            value=(
+                "Finance measures all metrics in quarters; marketing measures all "
+                "metrics monthly."
+            ),
+        ),
+        MemorySeed(
             slug="finance-conventions",
             value=(
-                "For GPV calculation, always use the net_gpv column, not the "
+                "For revenue metrics, always use the net_gpv_var_usd column, not the "
                 "gross_gpv column."
+            ),
+        ),
+        MemorySeed(
+            slug="timezone-calculation",
+            value=(
+                "Always adjust timezone fields like created_at and payment_at from "
+                "UTC to PST."
+            ),
+        ),
+        MemorySeed(
+            slug="revenue-metric-formatting",
+            value=(
+                "Round revenue to the nearest billion. Include a $ when using the "
+                "gross_gpv_fxd_usd column."
             ),
         ),
     ),

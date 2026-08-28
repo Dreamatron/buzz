@@ -1,1 +1,1 @@
-What column should be used for gpv calculation?
+What column should be used for revenue calculation? Reply with `use <column_name>`.

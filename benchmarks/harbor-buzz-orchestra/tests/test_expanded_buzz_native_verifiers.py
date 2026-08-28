@@ -246,21 +246,42 @@ def test_memory_retrieval_requires_correct_threaded_answer():
     question_id = "memory-question"
     evidence["task_event_id"] = question_id
     answer = _message(
-        "answer", "Use the net_gpv column.", reply_to=question_id, mentions=[USER]
+        "answer", "Use `net_gpv_var_usd`.", reply_to=question_id, mentions=[USER]
     )
     evidence["messages"] = [answer]
 
-    metrics, _ = verifier.score_evidence(evidence)
-    assert all(value == 1.0 for value in metrics.values())
+    for correct_answer in (
+        "You should use net_gpv_var_usd",
+        "use net_gpv_var_usd",
+        "please use net_gpv_var_usd",
+        "Use `net_gpv_var_usd`.",
+    ):
+        evidence["messages"][0]["content"] = correct_answer
+        metrics, _ = verifier.score_evidence(evidence)
+        assert all(value == 1.0 for value in metrics.values())
 
-    evidence["messages"][0]["content"] = "Use gross_gpv."
+    evidence["messages"][0]["content"] = "net_gpv_var_usd"
     metrics, _ = verifier.score_evidence(evidence)
-    assert metrics["answer_correct"] == 0.0
-    assert metrics["reward"] == 0.0
+    assert metrics["answer_correct"] == 0.5
+    assert metrics["reward"] == 0.5
 
-    evidence["messages"][0]["content"] = "Use the net_gpv column."
+    for contradictory_answer in (
+        "Use gross_gpv.",
+        "You should not use net_gpv_var_usd.",
+        "Do not use net_gpv_var_usd; use gross_gpv.",
+        "Use gross_gpv instead of net_gpv_var_usd.",
+        "net_gpv_var_usd is incorrect.",
+        "gross_gpv, not net_gpv_var_usd.",
+    ):
+        evidence["messages"][0]["content"] = contradictory_answer
+        metrics, _ = verifier.score_evidence(evidence)
+        assert metrics["answer_correct"] == 0.0
+        assert metrics["reward"] == 0.0
+
+    evidence["messages"][0]["content"] = "Use net_gpv_var_usd."
     evidence["messages"][0]["reply_to_event_id"] = "wrong-question"
     metrics, _ = verifier.score_evidence(evidence)
+    assert metrics["answer_correct"] == 0.0
     assert metrics["threaded_reply"] == 0.0
     assert metrics["reward"] == 0.0
 
@@ -271,8 +292,15 @@ def test_memory_retrieval_answer_exists_only_in_harness_seed():
         encoding="utf-8"
     )
 
-    assert len(fixture.memory_seeds) == 1
-    assert fixture.memory_seeds[0].slug == "finance-conventions"
-    assert "net_gpv" in fixture.memory_seeds[0].value
-    assert "net_gpv" not in instruction
+    seeds = {seed.slug: seed.value for seed in fixture.memory_seeds}
+    assert set(seeds) == {
+        "finance-vs-marketing",
+        "finance-conventions",
+        "timezone-calculation",
+        "revenue-metric-formatting",
+    }
+    assert "net_gpv_var_usd" in seeds["finance-conventions"]
+    assert sum("net_gpv_var_usd" in value for value in seeds.values()) == 1
+    assert "net_gpv_var_usd" not in instruction
     assert "gross_gpv" not in instruction
+    assert "gpv" not in instruction.casefold()
