@@ -66,6 +66,7 @@ function ignoreForumPost() {}
 function ignoreForumPostSelect() {}
 
 export function ProjectChannelHome({
+  allowRepositoryHealing,
   autoSendDraftKey,
   channel,
   project,
@@ -73,6 +74,7 @@ export function ProjectChannelHome({
   targetMessageEvents = EMPTY_TARGET_MESSAGE_EVENTS,
   targetMessageId,
 }: {
+  allowRepositoryHealing: boolean;
   autoSendDraftKey?: string | null;
   channel: Channel;
   project: Project;
@@ -396,8 +398,11 @@ export function ProjectChannelHome({
     },
     [],
   );
-  useHealProjectHomeRepositories(project, identityQuery.data?.pubkey);
-
+  useHealProjectHomeRepositories(
+    project,
+    allowRepositoryHealing,
+    identityQuery.data?.pubkey,
+  );
   const handleOpenCommit = React.useCallback(
     (commitHash: string) => {
       if (!workspaceRepository) return;
@@ -541,6 +546,7 @@ export function ProjectChannelHome({
       <div
         className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background"
         data-project-detail-screen
+        data-repository-healing-enabled={allowRepositoryHealing}
         data-testid="project-channel-home"
       >
         <div className="relative flex min-h-0 min-w-60 flex-1 flex-col overflow-hidden">
