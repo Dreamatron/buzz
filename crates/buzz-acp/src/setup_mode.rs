@@ -73,8 +73,9 @@ pub(crate) enum AcpAvailabilityStatus {
 use crate::{
     config::Config,
     event_mentions_agent, filter,
+    inbound_author_gate::AuthorizedListenerEvent,
     relay::{self, HarnessRelay, RelayEventPublisher},
-    InboundAuthorGate, InboundAuthorGateDecision, OwnerCache,
+    InboundAuthorGate, OwnerCache,
 };
 
 // ── Payload ───────────────────────────────────────────────────────────────────
@@ -431,9 +432,10 @@ pub(crate) async fn run_setup_listener(config: Config, payload: SetupPayload) ->
         // Apply the same author gate as normal mode so the nudge only goes
         // to authors the real agent would have answered. Same DM hardening:
         // in DMs only owner/siblings get a nudge (fail-closed on unknown type).
-        let allowed = evaluate_setup_listener_author(
+        // LISTENER_AUTHOR_GATE_BEGIN
+        let Some(authorized_event) = authorize_setup_listener_event(
             &mut author_gate_ctx,
-            &buzz_event,
+            buzz_event,
             &config.respond_to,
             &config.respond_to_allowlist,
             &owner_cache,
@@ -441,62 +443,82 @@ pub(crate) async fn run_setup_listener(config: Config, payload: SetupPayload) ->
             &rest_client,
         )
         .await
-        .allowed;
+        else {
+            continue;
+        };
 
-        // Apply channel/kind filter rules.
-        let filter_matched = filter::match_event(
-            &buzz_event.event,
-            buzz_event.channel_id,
+        if !nudge_authorized_event(
+            authorized_event,
             &rules,
             &pubkey_hex,
-        )
-        .await
-        .is_some();
-
-        // Pure gate: author gate verdict + event-id dedup.
-        if !should_nudge_for_event(
-            buzz_event.event.id,
-            allowed,
-            filter_matched,
             &mut nudged_event_ids,
-        ) {
-            continue;
-        }
-
-        // Build and publish the setup nudge.
-        if let Err(e) = publish_setup_nudge(
             &publisher,
             &config.keys,
-            buzz_event.channel_id,
-            &buzz_event.event,
             &payload,
         )
         .await
         {
-            tracing::warn!("setup-mode: failed to publish nudge: {e}");
-        } else {
-            tracing::info!(
-                channel_id = %buzz_event.channel_id,
-                event_id = %buzz_event.event.id,
-                "setup-mode: nudge published"
-            );
+            continue;
         }
+        // LISTENER_AUTHOR_GATE_END
     }
 
     Ok(())
 }
 
-pub(super) async fn evaluate_setup_listener_author(
+async fn nudge_authorized_event(
+    authorized_event: AuthorizedListenerEvent,
+    rules: &[filter::SubscriptionRule],
+    pubkey_hex: &str,
+    nudged_event_ids: &mut HashSet<EventId>,
+    publisher: &RelayEventPublisher,
+    keys: &nostr::Keys,
+    payload: &SetupPayload,
+) -> bool {
+    let buzz_event = authorized_event.into_event();
+
+    // Apply channel/kind filter rules.
+    let filter_matched =
+        filter::match_event(&buzz_event.event, buzz_event.channel_id, rules, pubkey_hex)
+            .await
+            .is_some();
+
+    if !should_nudge_for_event(buzz_event.event.id, filter_matched, nudged_event_ids) {
+        return false;
+    }
+
+    // Build and publish the setup nudge.
+    if let Err(e) = publish_setup_nudge(
+        publisher,
+        keys,
+        buzz_event.channel_id,
+        &buzz_event.event,
+        payload,
+    )
+    .await
+    {
+        tracing::warn!("setup-mode: failed to publish nudge: {e}");
+    } else {
+        tracing::info!(
+            channel_id = %buzz_event.channel_id,
+            event_id = %buzz_event.event.id,
+            "setup-mode: nudge published"
+        );
+    }
+    true
+}
+
+pub(super) async fn authorize_setup_listener_event(
     author_gate: &mut InboundAuthorGate,
-    buzz_event: &relay::BuzzEvent,
+    buzz_event: relay::BuzzEvent,
     respond_to: &crate::config::RespondTo,
     allowlist: &HashSet<String>,
     owner_cache: &OwnerCache,
     channel_info: &crate::pool::ChannelInfoResolver,
     rest_client: &relay::RestClient,
-) -> InboundAuthorGateDecision {
+) -> Option<AuthorizedListenerEvent> {
     author_gate
-        .evaluate_listener_event(
+        .authorize_listener_event(
             buzz_event,
             respond_to,
             allowlist,
@@ -507,25 +529,19 @@ pub(super) async fn evaluate_setup_listener_author(
         .await
 }
 
-/// Outcome of the pure per-event gate checks in setup mode.
+/// Outcome of the synchronous per-event setup checks.
 ///
-/// Callers compute the async gates (`author_allowed`, `filter::match_event`)
-/// up-front, then pass the boolean results here. This helper handles
-/// everything that is synchronous and stateful: the author gate verdict
-/// and event-id dedup.
+/// This helper owns only filter matching and event-id deduplication; the
+/// production path can call it only through `nudge_authorized_event`, whose
+/// input is the gate's private authorized capability.
 ///
 /// Returns `true` when the event should produce a nudge.
 #[must_use]
 pub(crate) fn should_nudge_for_event(
     event_id: EventId,
-    author_allowed: bool,
     filter_matched: bool,
     nudged_event_ids: &mut HashSet<EventId>,
 ) -> bool {
-    if !author_allowed {
-        tracing::debug!("setup-mode: event filtered by author gate");
-        return false;
-    }
     if !filter_matched {
         return false;
     }
@@ -1012,32 +1028,25 @@ mod tests {
 
     // ── should_nudge_for_event gate tests ─────────────────────────────────────
     //
-    // These tests exercise the loop-wiring for the two safety-critical guards:
-    // (a) non-allowlisted author → no nudge, (b) same event-id → exactly one
-    // nudge. They use the extracted `should_nudge_for_event` helper, which is
-    // the exact code the live loop calls.
+    // These tests exercise the loop-adjacent synchronous guards after an event
+    // has passed the structurally mandatory author capability: (a) unmatched
+    // filter → no nudge, (b) same event-id → exactly one nudge.
 
     fn fake_event_id(byte: u8) -> EventId {
         EventId::from_byte_array([byte; 32])
     }
 
     #[test]
-    fn test_non_allowlisted_author_returns_no_nudge() {
-        // author_allowed = false → should return false regardless of other args.
+    fn test_unmatched_filter_returns_no_nudge() {
         let mut dedup: HashSet<EventId> = HashSet::new();
         let event_id = fake_event_id(0xAA);
 
-        let result = should_nudge_for_event(
-            event_id, false, // author NOT allowed
-            true,  // filter matched — would otherwise nudge
-            &mut dedup,
-        );
+        let result = should_nudge_for_event(event_id, false, &mut dedup);
 
-        assert!(!result, "non-allowlisted author must not produce a nudge");
-        // Dedup set must remain empty — no phantom insertion for blocked author.
+        assert!(!result, "unmatched event must not produce a nudge");
         assert!(
             dedup.is_empty(),
-            "dedup set must not record event for blocked author"
+            "dedup set must not record an unmatched event"
         );
     }
 
@@ -1048,19 +1057,11 @@ mod tests {
         let mut dedup: HashSet<EventId> = HashSet::new();
         let event_id = fake_event_id(0xBB);
 
-        let first = should_nudge_for_event(
-            event_id, true, // allowed
-            true, // matched
-            &mut dedup,
-        );
+        let first = should_nudge_for_event(event_id, true, &mut dedup);
         assert!(first, "first occurrence must be accepted");
 
         // Simulate reconnect replay: same event arrives again.
-        let second = should_nudge_for_event(
-            event_id, true, // allowed
-            true, // matched
-            &mut dedup,
-        );
+        let second = should_nudge_for_event(event_id, true, &mut dedup);
         assert!(
             !second,
             "replay of the same event-id must be rejected (dedup)"

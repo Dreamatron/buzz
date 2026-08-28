@@ -317,17 +317,6 @@ fn effective_prompt_author(
         .unwrap_or_else(|| event.pubkey.to_hex())
 }
 
-/// Combined event-to-author gate used by both the normal and setup listeners.
-///
-/// Keeping workflow attribution and the existing author policy in one helper
-/// prevents either runtime path from accidentally reverting to the raw relay
-/// signer while unit tests continue to exercise only the individual pieces.
-struct InboundAuthorGateDecision {
-    effective_author: String,
-    allowed: bool,
-    is_dm: bool,
-}
-
 /// Owns the verified relay signing identity for a listener's lifetime and
 /// applies the inbound author gate to each event.
 ///
@@ -347,9 +336,37 @@ struct InboundAuthorGateDecision {
 mod inbound_author_gate {
     use super::{
         effective_prompt_author, is_dm_channel, is_owner_or_sibling, pool, refresh_relay_self,
-        relay, InboundAuthorGateDecision, OwnerCache, RespondTo,
+        relay, OwnerCache, RespondTo,
     };
     use std::collections::HashSet;
+
+    pub(crate) struct InboundAuthorGateDecision {
+        pub(crate) effective_author: String,
+        pub(crate) allowed: bool,
+        pub(crate) is_dm: bool,
+    }
+
+    /// An event that passed the complete listener author boundary.
+    ///
+    /// The event is moved into the gate before policy evaluation and can only
+    /// be recovered through this private-field capability. Both production
+    /// loops therefore have to consume the gate's verdict before they can use
+    /// or publish the event; replacing the call with a raw signer or a local
+    /// `allowed = true` no longer type-checks.
+    pub(crate) struct AuthorizedListenerEvent {
+        buzz_event: relay::BuzzEvent,
+        effective_author: String,
+    }
+
+    impl AuthorizedListenerEvent {
+        pub(crate) fn into_parts(self) -> (relay::BuzzEvent, String) {
+            (self.buzz_event, self.effective_author)
+        }
+
+        pub(crate) fn into_event(self) -> relay::BuzzEvent {
+            self.buzz_event
+        }
+    }
 
     /// Apply the configured raw-author policy after trusted workflow attribution.
     ///
@@ -507,6 +524,42 @@ mod inbound_author_gate {
             }
         }
 
+        pub(crate) async fn authorize_listener_event(
+            &mut self,
+            buzz_event: relay::BuzzEvent,
+            respond_to: &RespondTo,
+            allowlist: &HashSet<String>,
+            owner_cache: &OwnerCache,
+            channel_info: &pool::ChannelInfoResolver,
+            rest_client: &relay::RestClient,
+        ) -> Option<AuthorizedListenerEvent> {
+            let decision = self
+                .evaluate_listener_event(
+                    &buzz_event,
+                    respond_to,
+                    allowlist,
+                    owner_cache,
+                    channel_info,
+                    rest_client,
+                )
+                .await;
+            if !decision.allowed {
+                tracing::debug!(
+                    channel_id = %buzz_event.channel_id,
+                    raw_author = %buzz_event.event.pubkey.to_hex(),
+                    effective_author = %decision.effective_author,
+                    mode = %respond_to,
+                    is_dm = decision.is_dm,
+                    "inbound author gate — dropping event"
+                );
+                return None;
+            }
+            Some(AuthorizedListenerEvent {
+                buzz_event,
+                effective_author: decision.effective_author,
+            })
+        }
+
         #[cfg(test)]
         pub(crate) async fn evaluate_for_test(
             &self,
@@ -530,24 +583,31 @@ mod inbound_author_gate {
     }
 }
 
-use inbound_author_gate::InboundAuthorGate;
+use inbound_author_gate::{AuthorizedListenerEvent, InboundAuthorGate};
+
+struct AuthorizedNormalListenerEvent(AuthorizedListenerEvent);
+
+impl AuthorizedNormalListenerEvent {
+    fn into_parts(self) -> (relay::BuzzEvent, String) {
+        self.0.into_parts()
+    }
+}
 
 /// Apply the complete normal-listener author boundary for one relay event.
 ///
-/// Keeping this as the production callable used by the loop lets regression
-/// tests prove workflow attribution, identity recovery, and policy denial at
-/// the listener seam rather than only inside [`InboundAuthorGate`].
-async fn evaluate_normal_listener_author(
+/// The event is consumed here, so the production loop cannot recover it except
+/// from the gate's private authorized capability.
+async fn authorize_normal_listener_event(
     author_gate: &mut InboundAuthorGate,
-    buzz_event: &relay::BuzzEvent,
+    buzz_event: relay::BuzzEvent,
     respond_to: &RespondTo,
     allowlist: &HashSet<String>,
     owner_cache: &OwnerCache,
     channel_info: &pool::ChannelInfoResolver,
     rest_client: &relay::RestClient,
-) -> Option<String> {
-    let decision = author_gate
-        .evaluate_listener_event(
+) -> Option<AuthorizedListenerEvent> {
+    author_gate
+        .authorize_listener_event(
             buzz_event,
             respond_to,
             allowlist,
@@ -555,19 +615,7 @@ async fn evaluate_normal_listener_author(
             channel_info,
             rest_client,
         )
-        .await;
-    if !decision.allowed {
-        tracing::debug!(
-            channel_id = %buzz_event.channel_id,
-            raw_author = %buzz_event.event.pubkey.to_hex(),
-            effective_author = %decision.effective_author,
-            mode = %respond_to,
-            is_dm = decision.is_dm,
-            "inbound author gate — dropping event"
-        );
-        return None;
-    }
-    Some(decision.effective_author)
+        .await
 }
 
 /// Refresh the relay signing identity, logging why delegated workflow
@@ -3200,9 +3248,10 @@ async fn tokio_main() -> Result<()> {
                             // launched by the same human). Allowlist adds the
                             // explicit pubkey list on top, for external people;
                             // it never revokes same-owner team bots.
-                            let Some(author_hex) = evaluate_normal_listener_author(
+                            // LISTENER_AUTHOR_GATE_BEGIN
+                            let Some(authorized_event) = authorize_normal_listener_event(
                                 &mut author_gate_ctx,
-                                &buzz_event,
+                                buzz_event,
                                 &config.respond_to,
                                 &config.respond_to_allowlist,
                                 &owner_cache,
@@ -3213,6 +3262,9 @@ async fn tokio_main() -> Result<()> {
                             else {
                                 continue;
                             };
+                            let (buzz_event, author_hex) =
+                                AuthorizedNormalListenerEvent(authorized_event).into_parts();
+                            // LISTENER_AUTHOR_GATE_END
 
                             let matched = filter::match_event(&buzz_event.event, buzz_event.channel_id, &rules, &pubkey_hex).await;
                             let prompt_tag = match matched {
@@ -6122,22 +6174,33 @@ mod author_gate_tests {
         workflow_owner: &str,
         responses: std::collections::VecDeque<Result<serde_json::Value, ()>>,
         event_generation: u64,
+        channel_type: &str,
         respond_to: RespondTo,
+        allowlist: HashSet<String>,
         cache_owner: bool,
+        cache_sibling: bool,
     ) -> (Option<String>, bool) {
         let relay_hex = relay_keys.public_key().to_hex();
         let agent = nostr::Keys::generate().public_key().to_hex();
         let (rest_client, server) = nip11_scripted_server(responses).await;
         let mut gate = InboundAuthorGate::connect(&rest_client, &agent, "listener startup").await;
-        let owner_cache = OwnerCache::new(cache_owner.then(|| workflow_owner.to_string()));
+        let configured_owner = if cache_owner {
+            Some(workflow_owner.to_string())
+        } else if cache_sibling {
+            Some(nostr::Keys::generate().public_key().to_hex())
+        } else {
+            None
+        };
+        let owner_cache = OwnerCache::new(configured_owner);
         owner_cache.cache_sibling(relay_hex, false);
+        owner_cache.cache_sibling(workflow_owner.to_string(), cache_sibling);
         let channel_id = Uuid::new_v4();
         let channel_info = pool::ChannelInfoResolver::new(
             HashMap::from([(
                 channel_id,
                 relay::ChannelInfo {
                     name: "workflow".into(),
-                    channel_type: "stream".into(),
+                    channel_type: channel_type.into(),
                     description: None,
                 },
             )]),
@@ -6148,38 +6211,36 @@ mod author_gate_tests {
             channel_id,
             event: relay_signed_workflow_dispatch(relay_keys, workflow_owner, &agent),
         };
-        let allowlist = HashSet::new();
-        let (effective_author, allowed) = match listener {
+        let authorized = match listener {
             ListenerBoundary::Normal => {
-                let author = evaluate_normal_listener_author(
+                authorize_normal_listener_event(
                     &mut gate,
-                    &event,
+                    event,
                     &respond_to,
                     &allowlist,
                     &owner_cache,
                     &channel_info,
                     &rest_client,
                 )
-                .await;
-                let allowed = author.is_some();
-                (author, allowed)
+                .await
             }
             ListenerBoundary::Setup => {
-                let decision = setup_mode::evaluate_setup_listener_author(
+                setup_mode::authorize_setup_listener_event(
                     &mut gate,
-                    &event,
+                    event,
                     &respond_to,
                     &allowlist,
                     &owner_cache,
                     &channel_info,
                     &rest_client,
                 )
-                .await;
-                (Some(decision.effective_author), decision.allowed)
+                .await
             }
         };
+        let result = authorized.map(|event| event.into_parts().1);
         server.abort();
-        (effective_author, allowed)
+        let allowed = result.is_some();
+        (result, allowed)
     }
 
     #[derive(Clone, Copy, Debug)]
@@ -6195,6 +6256,47 @@ mod author_gate_tests {
                 Self::Setup => "setup",
             }
         }
+    }
+
+    fn listener_gate_region<'a>(source: &'a str, label: &str) -> &'a str {
+        let begin = ["LISTENER_AUTHOR_GATE_", "BEGIN"].concat();
+        let end = ["LISTENER_AUTHOR_GATE_", "END"].concat();
+        let mut regions = source.split(&begin);
+        let _before = regions.next().expect("source has a prefix");
+        let region = regions
+            .next()
+            .unwrap_or_else(|| panic!("{label} listener gate begin marker missing"));
+        assert!(
+            regions.next().is_none(),
+            "{label} listener gate begin marker must be unique"
+        );
+        let mut region_parts = region.split(&end);
+        let body = region_parts
+            .next()
+            .expect("gate region has a body before its end marker");
+        assert!(
+            region_parts.next().is_some(),
+            "{label} listener gate end marker missing"
+        );
+        body
+    }
+
+    /// The production loop segments themselves retain the authorization
+    /// capability edge. This complements behavioral tests at the callables:
+    /// replacing either loop call with a raw signer or permissive boolean
+    /// removes the required symbols from its marked segment and fails here.
+    #[test]
+    fn production_listener_loops_consume_authorized_event_capabilities() {
+        let normal = listener_gate_region(include_str!("lib.rs"), "normal");
+        assert_eq!(
+            normal.matches("authorize_normal_listener_event(").count(),
+            1
+        );
+        assert_eq!(normal.matches("AuthorizedNormalListenerEvent(").count(), 1);
+
+        let setup = listener_gate_region(include_str!("setup_mode.rs"), "setup");
+        assert_eq!(setup.matches("authorize_setup_listener_event(").count(), 1);
+        assert_eq!(setup.matches("nudge_authorized_event(").count(), 1);
     }
 
     /// Both production listener callables must attribute relay-signed workflow
@@ -6213,8 +6315,11 @@ mod author_gate_tests {
                 &accepted_workflow_owner,
                 std::collections::VecDeque::from([Ok(serde_json::json!({ "self": relay_hex }))]),
                 0,
+                "stream",
                 RespondTo::OwnerOnly,
+                HashSet::new(),
                 true,
+                false,
             )
             .await;
             assert!(
@@ -6238,13 +6343,130 @@ mod author_gate_tests {
                 &denied_workflow_owner,
                 std::collections::VecDeque::from([Ok(serde_json::json!({ "self": relay_hex }))]),
                 0,
+                "stream",
                 RespondTo::Nobody,
+                HashSet::new(),
                 true,
+                false,
             )
             .await;
             assert!(
                 !denied.1,
                 "{} listener must enforce respond-to=nobody",
+                listener.name()
+            );
+        }
+    }
+
+    /// Both production boundaries must retain DM classification when composing
+    /// trusted workflow attribution with configured author policy. External
+    /// allowlist entries and `Anyone` stay denied in a DM; owner and sibling
+    /// principals remain allowed; `Nobody` remains absolute.
+    #[tokio::test]
+    async fn production_listener_boundaries_enforce_dm_author_policy() {
+        for listener in [ListenerBoundary::Normal, ListenerBoundary::Setup] {
+            let relay_keys = nostr::Keys::generate();
+            let relay_hex = relay_keys.public_key().to_hex();
+            let external = nostr::Keys::generate().public_key().to_hex();
+            let external_allowlist = HashSet::from([external.clone()]);
+            let denied_external = listener_boundary_scenario(
+                listener,
+                &relay_keys,
+                &external,
+                std::collections::VecDeque::from([Ok(serde_json::json!({ "self": relay_hex }))]),
+                0,
+                "dm",
+                RespondTo::Allowlist,
+                external_allowlist,
+                false,
+                false,
+            )
+            .await;
+            assert!(
+                !denied_external.1,
+                "{} listener must deny an external allowlist entry in a DM",
+                listener.name()
+            );
+
+            let relay_keys = nostr::Keys::generate();
+            let relay_hex = relay_keys.public_key().to_hex();
+            let stranger = nostr::Keys::generate().public_key().to_hex();
+            let denied_stranger = listener_boundary_scenario(
+                listener,
+                &relay_keys,
+                &stranger,
+                std::collections::VecDeque::from([Ok(serde_json::json!({ "self": relay_hex }))]),
+                0,
+                "dm",
+                RespondTo::Anyone,
+                HashSet::new(),
+                false,
+                false,
+            )
+            .await;
+            assert!(
+                !denied_stranger.1,
+                "{} listener must deny a stranger in a DM under Anyone",
+                listener.name()
+            );
+
+            for (principal, cache_owner, cache_sibling, label) in [
+                (
+                    nostr::Keys::generate().public_key().to_hex(),
+                    true,
+                    false,
+                    "owner",
+                ),
+                (
+                    nostr::Keys::generate().public_key().to_hex(),
+                    false,
+                    true,
+                    "sibling",
+                ),
+            ] {
+                let relay_keys = nostr::Keys::generate();
+                let relay_hex = relay_keys.public_key().to_hex();
+                let allowed = listener_boundary_scenario(
+                    listener,
+                    &relay_keys,
+                    &principal,
+                    std::collections::VecDeque::from([Ok(
+                        serde_json::json!({ "self": relay_hex }),
+                    )]),
+                    0,
+                    "dm",
+                    RespondTo::Anyone,
+                    HashSet::new(),
+                    cache_owner,
+                    cache_sibling,
+                )
+                .await;
+                assert!(
+                    allowed.1,
+                    "{} listener must allow the {label} in a DM",
+                    listener.name()
+                );
+            }
+
+            let relay_keys = nostr::Keys::generate();
+            let relay_hex = relay_keys.public_key().to_hex();
+            let owner = nostr::Keys::generate().public_key().to_hex();
+            let denied_nobody = listener_boundary_scenario(
+                listener,
+                &relay_keys,
+                &owner,
+                std::collections::VecDeque::from([Ok(serde_json::json!({ "self": relay_hex }))]),
+                0,
+                "dm",
+                RespondTo::Nobody,
+                HashSet::new(),
+                true,
+                false,
+            )
+            .await;
+            assert!(
+                !denied_nobody.1,
+                "{} listener must enforce Nobody in a DM",
                 listener.name()
             );
         }
@@ -6269,8 +6491,11 @@ mod author_gate_tests {
                     Ok(serde_json::json!({ "self": relay_hex })),
                 ]),
                 0,
+                "stream",
                 RespondTo::OwnerOnly,
+                HashSet::new(),
                 true,
+                false,
             )
             .await;
             assert!(
