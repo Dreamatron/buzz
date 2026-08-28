@@ -584,6 +584,10 @@ impl RestClient {
 /// Events the harness cares about.
 #[derive(Debug, Clone)]
 pub struct BuzzEvent {
+    /// Which authenticated relay connection delivered this event. Generation 0
+    /// is the initial connection; each successful reconnect increments it
+    /// before any buffered or live event from that connection is forwarded.
+    pub connection_generation: u64,
     /// Which channel this event belongs to.
     pub channel_id: Uuid,
     /// The underlying Nostr event.
@@ -1209,6 +1213,10 @@ struct BgState {
     /// A single failed channel REQ is parked here instead of aborting the whole
     /// reconnect. Drained by the main loop. Flushed on each reconnect attempt.
     resubscribe_retry: HashSet<Uuid>,
+    /// Current authenticated WebSocket generation. Incremented immediately
+    /// after each successful reconnect handshake, before buffered or live
+    /// events from the new connection are forwarded.
+    connection_generation: u64,
     /// Current position in the exponential backoff ladder.
     ///
     /// Persisted across calls to `wait_for_reconnect` so a flapping link stays at
@@ -1240,6 +1248,7 @@ impl BgState {
             observer_in_flight: VecDeque::new(),
             gated_observer_dropped: 0,
             resubscribe_retry: HashSet::new(),
+            connection_generation: 0,
             backoff_step: 0,
         }
     }
@@ -2258,6 +2267,7 @@ async fn handle_ws_message(
                         }
                         let ts = event.created_at.as_secs();
                         let buzz_event = BuzzEvent {
+                            connection_generation: state.connection_generation,
                             channel_id: channel_uuid,
                             event: *event,
                         };
@@ -2299,6 +2309,7 @@ async fn handle_ws_message(
                         let event_id_hex = event.id.to_hex();
                         if state.record_event(channel_id, &event) {
                             let buzz_event = BuzzEvent {
+                                connection_generation: state.connection_generation,
                                 channel_id,
                                 event: *event,
                             };
@@ -3082,6 +3093,7 @@ async fn try_autonomous_reconnect(
         match do_connect(relay_url, keys, auth_tag).await {
             Ok((new_ws, handshake_buffer)) => {
                 *ws = new_ws;
+                state.connection_generation = state.connection_generation.saturating_add(1);
                 info!("autonomous reconnect succeeded (attempt {})", attempt + 1);
                 let handshake_ok = process_handshake_buffer(
                     ws,
@@ -3220,6 +3232,7 @@ async fn wait_for_reconnect(
         match do_connect(relay_url, keys, auth_tag).await {
             Ok((new_ws, handshake_buffer)) => {
                 *ws = new_ws;
+                state.connection_generation = state.connection_generation.saturating_add(1);
                 info!("relay reconnected to {relay_url}");
                 let handshake_ok = process_handshake_buffer(
                     ws,
