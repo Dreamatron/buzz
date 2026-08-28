@@ -207,10 +207,7 @@ impl axum::extract::FromRequestParts<Arc<AppState>> for GitAuth {
         // attach their NIP-OA attestation to the signed NIP-98 event, matching
         // the WebSocket NIP-42 flow.
         let event_auth_tag = crate::handlers::auth::extract_auth_tag_json(&event);
-        let header_auth_tag = parts
-            .headers
-            .get("x-auth-tag")
-            .and_then(|value| value.to_str().ok());
+        let header_auth_tag = crate::api::relay_members::extract_auth_tag_header(&parts.headers);
         let auth_tag = event_auth_tag.as_deref().or(header_auth_tag);
         if crate::api::relay_members::enforce_relay_membership(
             state,

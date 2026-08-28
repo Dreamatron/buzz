@@ -208,7 +208,7 @@ impl FromRequestParts<Arc<AppState>> for AuthenticatedUpload {
         // storage and of `require_auth_token` (which governs the REST API, not
         // media). On open relays (membership disabled) any valid Blossom signer
         // may upload, matching the WS door's admission policy.
-        let auth_tag = headers.get("x-auth-tag").and_then(|v| v.to_str().ok());
+        let auth_tag = crate::api::relay_members::extract_auth_tag_header(headers);
         crate::api::relay_members::enforce_relay_membership(
             state,
             tenant.community(),
@@ -535,7 +535,7 @@ async fn authenticate_media_read(
     let sha256 = sha256_ext.split('.').next().unwrap_or(sha256_ext);
     buzz_media::auth::verify_blossom_get_auth(&auth_event, sha256, Some(tenant.host()), 3600)?;
 
-    let auth_tag = headers.get("x-auth-tag").and_then(|v| v.to_str().ok());
+    let auth_tag = crate::api::relay_members::extract_auth_tag_header(headers);
     crate::api::relay_members::enforce_relay_membership(
         state,
         tenant.community(),

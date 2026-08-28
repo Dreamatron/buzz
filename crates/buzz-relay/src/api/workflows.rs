@@ -71,9 +71,7 @@ async fn authorize_workflow_read(
     bridge::check_nip98_replay(state, &tenant, event_id_bytes).await?;
 
     let pubkey_bytes = pubkey.to_bytes().to_vec();
-    let auth_tag = headers
-        .get("x-auth-tag")
-        .and_then(|value| value.to_str().ok());
+    let auth_tag = super::relay_members::extract_auth_tag_header(headers);
     super::relay_members::enforce_relay_membership(
         state,
         tenant.community(),

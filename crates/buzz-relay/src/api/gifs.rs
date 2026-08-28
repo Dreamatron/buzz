@@ -156,9 +156,7 @@ async fn authenticate(
         state,
         tenant.community(),
         &pubkey.to_bytes(),
-        headers
-            .get("x-auth-tag")
-            .and_then(|value| value.to_str().ok()),
+        relay_members::extract_auth_tag_header(headers),
         signed_created_at,
     )
     .await?;

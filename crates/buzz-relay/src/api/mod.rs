@@ -37,7 +37,10 @@ pub(crate) fn not_found(msg: &str) -> (StatusCode, Json<serde_json::Value>) {
 /// Moved here from the deleted `relay_members` module. Called by `media.rs`, `bridge.rs`,
 /// `git/transport.rs`, and `audio/handler.rs`.
 pub mod relay_members {
-    use axum::{http::StatusCode, response::Json};
+    use axum::{
+        http::{HeaderMap, StatusCode},
+        response::Json,
+    };
     use buzz_core::{tenant::CommunityId, TenantContext};
     use tracing::{debug, info};
 
@@ -54,6 +57,18 @@ pub mod relay_members {
         ViaOwner(nostr::PublicKey),
         /// Caller is not admitted.
         Denied,
+    }
+
+    /// Return the sole NIP-OA credential header, if one was supplied.
+    ///
+    /// Repeated security-sensitive headers are ambiguous across HTTP stacks,
+    /// so they are treated as no credential instead of silently selecting one.
+    pub fn extract_auth_tag_header(headers: &HeaderMap) -> Option<&str> {
+        let mut values = headers.get_all("x-auth-tag").iter();
+        let (Some(value), None) = (values.next(), values.next()) else {
+            return None;
+        };
+        value.to_str().ok()
     }
 
     /// Check relay membership without committing to an HTTP response shape.
@@ -262,8 +277,21 @@ pub mod relay_members {
     #[cfg(test)]
     mod tests {
         use super::*;
+        use axum::http::{HeaderMap, HeaderValue};
         use buzz_sdk::nip_oa::compute_auth_tag;
         use nostr::Keys;
+
+        #[test]
+        fn auth_tag_header_must_be_unique() {
+            let mut headers = HeaderMap::new();
+            assert_eq!(extract_auth_tag_header(&headers), None);
+
+            headers.insert("x-auth-tag", HeaderValue::from_static("credential-one"));
+            assert_eq!(extract_auth_tag_header(&headers), Some("credential-one"));
+
+            headers.append("x-auth-tag", HeaderValue::from_static("credential-two"));
+            assert_eq!(extract_auth_tag_header(&headers), None);
+        }
 
         /// Valid NIP-OA auth tag → returns Some(owner_pubkey).
         #[test]

@@ -920,7 +920,7 @@ async fn submit_event_authed(
     };
 
     // Enforce relay membership (with NIP-OA fallback via x-auth-tag header).
-    let auth_tag = headers.get("x-auth-tag").and_then(|v| v.to_str().ok());
+    let auth_tag = super::relay_members::extract_auth_tag_header(headers);
     let nip_oa_owner = match super::relay_members::enforce_relay_membership(
         state,
         tenant.community(),
@@ -1099,7 +1099,7 @@ async fn query_events_authed(
     check_nip98_replay(state, tenant, event_id_bytes).await?;
     let pubkey_bytes = pubkey.to_bytes().to_vec();
 
-    let auth_tag = headers.get("x-auth-tag").and_then(|v| v.to_str().ok());
+    let auth_tag = super::relay_members::extract_auth_tag_header(headers);
     super::relay_members::enforce_relay_membership(
         state,
         tenant.community(),
@@ -1640,7 +1640,7 @@ async fn count_events_authed(
     check_nip98_replay(state, tenant, event_id_bytes).await?;
     let pubkey_bytes = pubkey.to_bytes().to_vec();
 
-    let auth_tag = headers.get("x-auth-tag").and_then(|v| v.to_str().ok());
+    let auth_tag = super::relay_members::extract_auth_tag_header(headers);
     super::relay_members::enforce_relay_membership(
         state,
         tenant.community(),
