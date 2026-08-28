@@ -357,13 +357,19 @@ fn ensure_skill_symlinks_skip_dangling_symlink() {
 }
 
 #[test]
-fn cli_link_name_prod_is_buzz() {
-    assert_eq!(cli_link_name(false), "buzz");
+fn cli_link_name_prod_follows_build_identity() {
+    let expected = crate::build_identity::demo_slug()
+        .map(|slug| format!("buzz-demo-{slug}"))
+        .unwrap_or_else(|| "buzz".to_string());
+    assert_eq!(cli_link_name(false), expected);
 }
 
 #[test]
-fn cli_link_name_dev_is_buzz_dev() {
-    assert_eq!(cli_link_name(true), "buzz-dev");
+fn cli_link_name_dev_follows_build_identity() {
+    let expected = crate::build_identity::demo_slug()
+        .map(|slug| format!("buzz-demo-{slug}"))
+        .unwrap_or_else(|| "buzz-dev".to_string());
+    assert_eq!(cli_link_name(true), expected);
 }
 
 #[cfg(unix)]
@@ -395,8 +401,8 @@ fn ensure_cli_symlink_creates_symlink_dev() {
     let local_bin = tmp.path().join("local_bin");
     fs::create_dir_all(&local_bin).unwrap();
 
-    // Dev link must be "buzz-dev", never "buzz".
-    assert_eq!(cli_link_name(true), "buzz-dev");
+    // Dev and demo links must never overwrite production's "buzz".
+    assert_ne!(cli_link_name(true), "buzz");
 
     let link = local_bin.join(cli_link_name(true));
     std::os::unix::fs::symlink(exe_parent.join("buzz"), &link).unwrap();

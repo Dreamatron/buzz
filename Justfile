@@ -261,6 +261,7 @@ desktop-tauri-test-compiled-flags: _ensure-sidecar-stubs
     BUZZ_BUILD_DEMO_SLUG="$DEMO_SLUG" \
       BUZZ_TEST_EXPECTED_DEMO_SLUG="$DEMO_SLUG" \
       cargo test compiled_demo_slug_matches_expected -- --ignored --nocapture
+    BUZZ_BUILD_DEMO_SLUG="$DEMO_SLUG" cargo test --workspace
     if node ../scripts/demo-build-config.mjs "$(printf 'x%.0s' {1..32})" /dev/null 1234567812345678; then
       echo "A 32-character demo name unexpectedly passed JavaScript validation" >&2
       exit 1
