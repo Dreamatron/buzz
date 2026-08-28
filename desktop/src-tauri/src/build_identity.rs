@@ -16,29 +16,34 @@ pub(crate) fn is_demo_build() -> bool {
 
 pub(crate) const DEMO_AGENT_CONFIG_ENV: &str = "BUZZ_AGENT_CONFIG_DIR";
 
-pub(crate) fn demo_config_home() -> Option<std::path::PathBuf> {
+pub(crate) fn demo_config_home() -> Result<Option<std::path::PathBuf>, String> {
     demo_config_home_for(demo_slug(), dirs::config_dir())
 }
 
-pub(crate) fn demo_agent_oauth_cache_dir() -> Option<std::path::PathBuf> {
-    demo_config_home().map(|dir| dir.join("buzz-agent").join("oauth"))
+pub(crate) fn demo_agent_oauth_cache_dir() -> Result<Option<std::path::PathBuf>, String> {
+    Ok(demo_config_home()?.map(|dir| dir.join("buzz-agent").join("oauth")))
 }
 
 /// Keep child config caches inside this demo build's identity. In particular,
 /// bundled buzz-agent OAuth tokens must not read or write production's root.
-pub(crate) fn apply_demo_config_home(command: &mut std::process::Command) {
-    if let Some(config_home) = demo_config_home() {
+/// Refuse launch if a demo cannot resolve its root; None means production only.
+pub(crate) fn apply_demo_config_home(command: &mut std::process::Command) -> Result<(), String> {
+    if let Some(config_home) = demo_config_home()? {
         command.env(DEMO_AGENT_CONFIG_ENV, config_home);
     }
+    Ok(())
 }
 
 fn demo_config_home_for(
     demo_slug: Option<&str>,
     config_dir: Option<std::path::PathBuf>,
-) -> Option<std::path::PathBuf> {
-    demo_slug
-        .zip(config_dir)
-        .map(|(slug, dir)| dir.join(format!("buzz-demo-{slug}")))
+) -> Result<Option<std::path::PathBuf>, String> {
+    match demo_slug {
+        None => Ok(None),
+        Some(slug) => config_dir
+            .map(|dir| Some(dir.join(format!("buzz-demo-{slug}"))))
+            .ok_or_else(|| "cannot resolve demo credential directory".to_string()),
+    }
 }
 
 pub(crate) fn deep_link_scheme() -> Cow<'static, str> {
@@ -112,10 +117,16 @@ mod tests {
     #[test]
     fn demo_agent_config_and_oauth_roots_are_build_scoped() {
         let base = std::path::PathBuf::from("/Users/demo/Library/Application Support");
-        assert_eq!(demo_config_home_for(None, Some(base.clone())), None);
-        let first =
-            demo_config_home_for(Some("board-1234567812345678"), Some(base.clone())).unwrap();
-        let second = demo_config_home_for(Some("board-8765432187654321"), Some(base)).unwrap();
+        assert_eq!(
+            demo_config_home_for(None, Some(base.clone())).unwrap(),
+            None
+        );
+        let first = demo_config_home_for(Some("board-1234567812345678"), Some(base.clone()))
+            .unwrap()
+            .unwrap();
+        let second = demo_config_home_for(Some("board-8765432187654321"), Some(base))
+            .unwrap()
+            .unwrap();
         assert_eq!(
             first,
             std::path::PathBuf::from(
@@ -129,6 +140,15 @@ mod tests {
             )
         );
         assert_ne!(first, second);
+    }
+
+    #[test]
+    fn unresolved_demo_credentials_never_select_production_defaults() {
+        assert_eq!(demo_config_home_for(None, None).unwrap(), None);
+        assert_eq!(
+            demo_config_home_for(Some("board-1234567812345678"), None),
+            Err("cannot resolve demo credential directory".to_string())
+        );
     }
 
     #[test]

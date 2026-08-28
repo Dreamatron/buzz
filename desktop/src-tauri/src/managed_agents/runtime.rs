@@ -808,7 +808,7 @@ pub fn spawn_agent_child(
     for (key, value) in &descriptor.env {
         command.env(key, value);
     }
-    crate::build_identity::apply_demo_config_home(&mut command);
+    crate::build_identity::apply_demo_config_home(&mut command)?;
 
     // B5: carry persisted effort; harness resolves thought_level configId at first session.
     // Written AFTER descriptor.env so the canonical persisted value wins over any

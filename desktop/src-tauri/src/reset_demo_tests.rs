@@ -149,3 +149,21 @@ fn demo_oauth_permission_failure_preserves_retry_intent() {
     assert!(!config.exists());
     assert!(!check_sentinel(&app_data));
 }
+
+#[test]
+fn unresolved_demo_config_keeps_reset_pending_without_deleting_state() {
+    let tmp = TempDir::new().unwrap();
+    let app_data = make_app_data(&tmp);
+    write_sentinel(&app_data).unwrap();
+    let kc = FakeKeychain::ok();
+    let mut ctx = make_ctx(&app_data, &kc, false);
+    ctx.is_demo = true;
+    assert!(ctx.demo_config_dir.is_none());
+    let outcome = run_boot_reset_with_keychain(ctx);
+    assert!(outcome.failed && !outcome.completed);
+    assert!(check_sentinel(&app_data));
+    assert!(
+        app_data.exists(),
+        "unresolved root must refuse before wiping"
+    );
+}

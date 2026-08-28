@@ -131,6 +131,16 @@ pub(crate) fn run_boot_reset(app_data_dir: &Path) -> ResetOutcome {
     let legacy_dir = crate::migration::legacy_app_data_dir(app_data_dir);
     let nest_dir = crate::managed_agents::nest_dir();
 
+    let demo_config_dir = match crate::build_identity::demo_config_home() {
+        Ok(dir) => dir,
+        Err(error) => {
+            eprintln!("buzz-desktop reset: {error}");
+            return ResetOutcome {
+                completed: false,
+                failed: true,
+            };
+        }
+    };
     let ctx = ResetContext {
         app_data_dir,
         legacy_app_data_dir: legacy_dir,
@@ -138,7 +148,7 @@ pub(crate) fn run_boot_reset(app_data_dir: &Path) -> ResetOutcome {
         keychain: &store,
         home_dir,
         is_dev,
-        demo_config_dir: crate::build_identity::demo_config_home(),
+        demo_config_dir,
         is_demo: crate::build_identity::is_demo_build(),
     };
 
@@ -173,6 +183,15 @@ fn rename_to_trash(src: &Path) -> Result<PathBuf, String> {
 
 /// Core wipe logic — separated for testing.
 pub(crate) fn run_boot_reset_with_keychain(ctx: ResetContext<'_>) -> ResetOutcome {
+    // An unknown demo credential root is not evidence of an absent root. Refuse
+    // before any destructive work and retain reset intent for the next boot.
+    if ctx.is_demo && ctx.demo_config_dir.is_none() {
+        eprintln!("buzz-desktop reset: cannot resolve demo credential directory");
+        return ResetOutcome {
+            completed: false,
+            failed: true,
+        };
+    }
     let app_data_dir = ctx.app_data_dir;
 
     // ── Step 1: rename app-data dir (atomic — sentinel survives the parent) ──
