@@ -403,6 +403,79 @@ async fn evaluate_inbound_author_gate(
     }
 }
 
+/// Owns the verified relay signing identity for a listener's lifetime and
+/// applies the inbound author gate to each event.
+///
+/// The relay identity is deliberately *not* a per-event parameter. Both
+/// listeners previously threaded a local `Option<String>` into every
+/// `evaluate_inbound_author_gate` call, which meant the delegated-workflow
+/// attribution this type exists to enforce could be silently disabled by
+/// passing `None` at either call site while every unit test still passed.
+/// Loading the identity in [`InboundAuthorGate::connect`] and refreshing it in
+/// [`InboundAuthorGate::refresh`] leaves the per-event path with no relay
+/// identity argument to drop, so wiring regressions become type errors or
+/// failures of the construction-level regression tests rather than silent
+/// availability loss.
+struct InboundAuthorGate {
+    agent_pubkey_hex: String,
+    relay_self: Option<String>,
+}
+
+impl InboundAuthorGate {
+    /// Load the relay signing identity for a freshly connected listener.
+    async fn connect(
+        rest_client: &relay::RestClient,
+        agent_pubkey_hex: &str,
+        context: &str,
+    ) -> Self {
+        Self {
+            agent_pubkey_hex: agent_pubkey_hex.to_string(),
+            relay_self: refresh_relay_self(rest_client, None, context).await,
+        }
+    }
+
+    /// Re-read the relay signing identity after a reconnect, retaining the last
+    /// verified key on a transient failure (see [`refresh_relay_self`]).
+    async fn refresh(&mut self, rest_client: &relay::RestClient, context: &str) {
+        self.relay_self = refresh_relay_self(rest_client, self.relay_self.take(), context).await;
+    }
+
+    /// Whether delegated workflow attribution is currently available.
+    ///
+    /// Test-only: production code never branches on this. `refresh_relay_self`
+    /// already logs why attribution is unavailable, and every runtime path
+    /// treats a missing identity by falling back to the raw signer.
+    #[cfg(test)]
+    fn has_relay_identity(&self) -> bool {
+        self.relay_self.is_some()
+    }
+
+    /// Resolve the effective author for `event` and apply the author policy.
+    async fn evaluate(
+        &self,
+        event: &nostr::Event,
+        respond_to: &RespondTo,
+        allowlist: &HashSet<String>,
+        is_dm: bool,
+        owner_cache: &OwnerCache,
+        rest_client: &relay::RestClient,
+    ) -> InboundAuthorGateDecision {
+        evaluate_inbound_author_gate(
+            event,
+            WorkflowAuthorContext {
+                relay_self: self.relay_self.as_deref(),
+                agent_pubkey_hex: &self.agent_pubkey_hex,
+            },
+            respond_to,
+            allowlist,
+            is_dm,
+            owner_cache,
+            rest_client,
+        )
+        .await
+    }
+}
+
 /// Refresh the relay signing identity, logging why delegated workflow
 /// attribution is unavailable. A transient fetch error keeps the last verified
 /// key so a reconnect blip cannot disable workflow wakes. That availability
@@ -2181,7 +2254,8 @@ async fn tokio_main() -> Result<()> {
     tracing::info!("connected to relay at {}", config.relay_url);
 
     let relay_rest_client = relay.rest_client();
-    let mut relay_self = refresh_relay_self(&relay_rest_client, None, "startup").await;
+    let mut author_gate_ctx =
+        InboundAuthorGate::connect(&relay_rest_client, &pubkey_hex, "startup").await;
 
     relay
         .subscribe_membership_notifications()
@@ -3033,19 +3107,16 @@ async fn tokio_main() -> Result<()> {
                             // it never revokes same-owner team bots.
                             let is_dm =
                                 is_dm_channel(buzz_event.channel_id, &ctx.channel_info).await;
-                            let author_gate = evaluate_inbound_author_gate(
-                                &buzz_event.event,
-                                WorkflowAuthorContext {
-                                    relay_self: relay_self.as_deref(),
-                                    agent_pubkey_hex: &pubkey_hex,
-                                },
-                                &config.respond_to,
-                                &config.respond_to_allowlist,
-                                is_dm,
-                                &owner_cache,
-                                &ctx.rest_client,
-                            )
-                            .await;
+                            let author_gate = author_gate_ctx
+                                .evaluate(
+                                    &buzz_event.event,
+                                    &config.respond_to,
+                                    &config.respond_to_allowlist,
+                                    is_dm,
+                                    &owner_cache,
+                                    &ctx.rest_client,
+                                )
+                                .await;
                             let author_hex = author_gate.effective_author;
                             if !author_gate.allowed {
                                 tracing::debug!(
@@ -3160,12 +3231,9 @@ async fn tokio_main() -> Result<()> {
                                 tokio::time::sleep(Duration::from_secs(1)).await;
                                 break;
                             }
-                            relay_self = refresh_relay_self(
-                                &relay_rest_client,
-                                relay_self,
-                                "reconnect",
-                            )
-                            .await;
+                            author_gate_ctx
+                                .refresh(&relay_rest_client, "reconnect")
+                                .await;
                         }
                     }
                     None
@@ -5863,6 +5931,203 @@ mod author_gate_tests {
         cache.cache_sibling(STRANGER.into(), false);
         cache.cache_sibling(EXTERNAL.into(), false);
         cache
+    }
+
+    /// Serve a NIP-11 document on a loopback port so `InboundAuthorGate` can be
+    /// built through the *same* constructor the listeners use, rather than by
+    /// injecting an already-resolved relay identity. This is what makes the
+    /// listener-to-gate wiring testable: a gate that never loads its identity
+    /// fails these tests instead of silently degrading to the raw signer.
+    async fn nip11_server(
+        document: serde_json::Value,
+    ) -> (relay::RestClient, tokio::task::JoinHandle<()>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind NIP-11 test server");
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let body = document.to_string();
+        let server = tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    break;
+                };
+                let mut request = vec![0; 8192];
+                let _ = socket.read(&mut request).await;
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/nostr+json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = socket.write_all(response.as_bytes()).await;
+            }
+        });
+        let rest = relay::RestClient {
+            http: reqwest::Client::new(),
+            base_url,
+            keys: nostr::Keys::generate(),
+            auth_tag_json: None,
+        };
+        (rest, server)
+    }
+
+    /// A genuine relay-signed workflow dispatch that explicitly targets `agent`
+    /// on behalf of `owner` — the exact event shape a scheduled workflow emits.
+    fn relay_signed_workflow_dispatch(
+        relay_keys: &nostr::Keys,
+        owner: &str,
+        agent: &str,
+    ) -> nostr::Event {
+        nostr::EventBuilder::new(nostr::Kind::Custom(KIND_STREAM_MESSAGE as u16), "dispatch")
+            .tags([
+                nostr::Tag::parse(["buzz:workflow", "true"]).expect("workflow marker"),
+                nostr::Tag::parse(["buzz:workflow-owner", owner]).expect("workflow owner tag"),
+                nostr::Tag::parse(["buzz:workflow-mention", agent]).expect("workflow mention tag"),
+                nostr::Tag::parse(["p", agent]).expect("recipient tag"),
+            ])
+            .sign_with_keys(relay_keys)
+            .expect("signed workflow event")
+    }
+
+    /// The listener-to-gate wiring regression.
+    ///
+    /// Both listeners build their gate with `InboundAuthorGate::connect` and
+    /// then call `evaluate` per event, with no relay-identity argument in
+    /// between. This test drives that exact sequence against a live NIP-11
+    /// document, so it fails if the identity load is dropped from construction,
+    /// if `evaluate` stops consulting the loaded identity, or if attribution
+    /// inside the shared gate regresses to the raw relay signer — the wake
+    /// failure that motivated this change.
+    #[tokio::test]
+    async fn test_connected_gate_wakes_owner_only_agent_for_relay_signed_workflow() {
+        let relay_keys = nostr::Keys::generate();
+        let relay_hex = relay_keys.public_key().to_hex();
+        let workflow_owner = nostr::Keys::generate().public_key().to_hex();
+        let agent = nostr::Keys::generate().public_key().to_hex();
+        let (rest_client, server) = nip11_server(serde_json::json!({ "self": relay_hex })).await;
+
+        let gate = InboundAuthorGate::connect(&rest_client, &agent, "test").await;
+        assert!(
+            gate.has_relay_identity(),
+            "the gate must load the relay signing identity during construction"
+        );
+
+        let event = relay_signed_workflow_dispatch(&relay_keys, &workflow_owner, &agent);
+        let cache = cache_with_sibling();
+        cache.cache_sibling(workflow_owner.clone(), true);
+        cache.cache_sibling(relay_hex.clone(), false);
+
+        let decision = gate
+            .evaluate(
+                &event,
+                &RespondTo::OwnerOnly,
+                &HashSet::new(),
+                false,
+                &cache,
+                &rest_client,
+            )
+            .await;
+
+        assert_eq!(
+            decision.effective_author, workflow_owner,
+            "a connected gate must attribute a relay-signed workflow dispatch to its owner, not the relay signer"
+        );
+        assert!(
+            decision.allowed,
+            "an owner-only agent must wake for its own workflow's explicit mention"
+        );
+        server.abort();
+    }
+
+    /// A gate whose relay identity is unavailable must fall back to the raw
+    /// signer and stay closed — the documented fail-closed behavior, and the
+    /// exact state the wiring regression above proves the listeners avoid.
+    #[tokio::test]
+    async fn test_gate_without_relay_identity_fails_closed_to_raw_signer() {
+        let relay_keys = nostr::Keys::generate();
+        let relay_hex = relay_keys.public_key().to_hex();
+        let workflow_owner = nostr::Keys::generate().public_key().to_hex();
+        let agent = nostr::Keys::generate().public_key().to_hex();
+        // A NIP-11 document with no `self` key: attribution is unavailable.
+        let (rest_client, server) = nip11_server(serde_json::json!({ "name": "relay" })).await;
+
+        let gate = InboundAuthorGate::connect(&rest_client, &agent, "test").await;
+        assert!(
+            !gate.has_relay_identity(),
+            "a NIP-11 document without `self` must leave attribution unavailable"
+        );
+
+        let event = relay_signed_workflow_dispatch(&relay_keys, &workflow_owner, &agent);
+        let cache = cache_with_sibling();
+        cache.cache_sibling(workflow_owner, true);
+        cache.cache_sibling(relay_hex.clone(), false);
+
+        let decision = gate
+            .evaluate(
+                &event,
+                &RespondTo::OwnerOnly,
+                &HashSet::new(),
+                false,
+                &cache,
+                &rest_client,
+            )
+            .await;
+
+        assert_eq!(
+            decision.effective_author, relay_hex,
+            "without a verified relay identity the gate must fall back to the raw signer"
+        );
+        assert!(
+            !decision.allowed,
+            "unattributed relay-signed output must not wake an owner-only agent"
+        );
+        server.abort();
+    }
+
+    /// A reconnect must re-arm attribution rather than leaving the listener
+    /// permanently degraded: `refresh` is the only path that updates the
+    /// identity after construction, and both listeners call it on reconnect.
+    #[tokio::test]
+    async fn test_gate_refresh_arms_attribution_after_reconnect() {
+        let relay_keys = nostr::Keys::generate();
+        let relay_hex = relay_keys.public_key().to_hex();
+        let agent = nostr::Keys::generate().public_key().to_hex();
+
+        // Construct against an unreachable relay: no identity yet.
+        let unreachable = relay::RestClient {
+            http: reqwest::Client::new(),
+            base_url: "http://127.0.0.1:1".into(),
+            keys: nostr::Keys::generate(),
+            auth_tag_json: None,
+        };
+        let mut gate = InboundAuthorGate::connect(&unreachable, &agent, "test").await;
+        assert!(!gate.has_relay_identity());
+
+        let (rest_client, server) = nip11_server(serde_json::json!({ "self": relay_hex })).await;
+        gate.refresh(&rest_client, "test reconnect").await;
+
+        let workflow_owner = nostr::Keys::generate().public_key().to_hex();
+        let event = relay_signed_workflow_dispatch(&relay_keys, &workflow_owner, &agent);
+        let cache = cache_with_sibling();
+        cache.cache_sibling(workflow_owner.clone(), true);
+
+        let decision = gate
+            .evaluate(
+                &event,
+                &RespondTo::OwnerOnly,
+                &HashSet::new(),
+                false,
+                &cache,
+                &rest_client,
+            )
+            .await;
+        assert_eq!(
+            decision.effective_author, workflow_owner,
+            "a reconnect refresh must restore delegated workflow attribution"
+        );
+        assert!(decision.allowed);
+        server.abort();
     }
 
     #[tokio::test]

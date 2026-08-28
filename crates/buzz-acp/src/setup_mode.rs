@@ -342,7 +342,8 @@ pub(crate) async fn run_setup_listener(config: Config, payload: SetupPayload) ->
     tracing::info!("setup-mode: connected and subscribed to membership notifications");
 
     let rest_client = relay.rest_client();
-    let mut relay_self = crate::refresh_relay_self(&rest_client, None, "setup startup").await;
+    let mut author_gate_ctx =
+        crate::InboundAuthorGate::connect(&rest_client, &pubkey_hex, "setup startup").await;
 
     // Resolve owner for author-gate (same priority as normal mode).
     let startup_owner = crate::resolve_agent_owner(&config);
@@ -396,8 +397,9 @@ pub(crate) async fn run_setup_listener(config: Config, payload: SetupPayload) ->
                 tracing::error!("setup-mode: relay background task is gone: {e} — exiting");
                 break;
             }
-            relay_self =
-                crate::refresh_relay_self(&rest_client, relay_self, "setup reconnect").await;
+            author_gate_ctx
+                .refresh(&rest_client, "setup reconnect")
+                .await;
             continue;
         };
 
@@ -432,19 +434,16 @@ pub(crate) async fn run_setup_listener(config: Config, payload: SetupPayload) ->
         // to authors the real agent would have answered. Same DM hardening:
         // in DMs only owner/siblings get a nudge (fail-closed on unknown type).
         let is_dm = crate::is_dm_channel(buzz_event.channel_id, &channel_info).await;
-        let author_gate = crate::evaluate_inbound_author_gate(
-            &buzz_event.event,
-            crate::WorkflowAuthorContext {
-                relay_self: relay_self.as_deref(),
-                agent_pubkey_hex: &pubkey_hex,
-            },
-            &config.respond_to,
-            &config.respond_to_allowlist,
-            is_dm,
-            &owner_cache,
-            &rest_client,
-        )
-        .await;
+        let author_gate = author_gate_ctx
+            .evaluate(
+                &buzz_event.event,
+                &config.respond_to,
+                &config.respond_to_allowlist,
+                is_dm,
+                &owner_cache,
+                &rest_client,
+            )
+            .await;
         let allowed = author_gate.allowed;
 
         // Apply channel/kind filter rules.
