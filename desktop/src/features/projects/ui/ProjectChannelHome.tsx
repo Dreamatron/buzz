@@ -1,3 +1,4 @@
+import { useQueries } from "@tanstack/react-query";
 import { useSearch } from "@tanstack/react-router";
 import { ArrowLeft, Maximize2, Plus } from "lucide-react";
 import * as React from "react";
@@ -7,8 +8,12 @@ import { useChannelsQuery } from "@/features/channels/hooks";
 import { ChannelScreenLoadingFallback } from "@/features/channels/ui/ChannelScreenLoadingFallback";
 import { ChannelViewOverrideProvider } from "@/features/channels/ui/ChannelViewOverrideContext";
 import { useCommunities } from "@/features/communities/useCommunities";
-import { useProfileQuery } from "@/features/profile/hooks";
-import type { Project } from "@/features/projects/hooks";
+import { useProfileQuery, useUsersBatchQuery } from "@/features/profile/hooks";
+import { fetchAvatarDataUrl } from "@/features/profile/lib/selfProfileStorage";
+import {
+  type Project,
+  useProjectPullRequestsQuery,
+} from "@/features/projects/hooks";
 import {
   projectHomeWorkspaceSheetExpandTab,
   projectHomeWorkspaceSheetTitle,
@@ -18,11 +23,14 @@ import { useChannelProjectFeatures } from "@/features/projects/useChannelProject
 import { useHealProjectHomeRepositories } from "@/features/projects/useHealProjectHomeRepositories";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import type { Channel, RelayEvent } from "@/shared/api/types";
+import { getAvatarSnapshotUrl } from "@/shared/lib/animatedAvatar";
+import { rewriteRelayUrl } from "@/shared/lib/mediaUrl";
 import { Button } from "@/shared/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { ViewLoadingFallback } from "@/shared/ui/ViewLoadingFallback";
 import { ProjectChannelResourcesView } from "./ProjectChannelResourcesView";
 import { ProjectCanvasSurface } from "./project-canvas/ProjectCanvasSurface";
+import type { ProjectCanvasSnapshots } from "./project-canvas/projectCanvasProtocol";
 import {
   ProjectChannelTabs,
   projectChannelViewEnabled,
@@ -37,6 +45,17 @@ import {
 import { ProjectRepositoryManagement } from "./ProjectRepositoryManagement";
 
 const EMPTY_TARGET_MESSAGE_EVENTS: RelayEvent[] = [];
+const MAX_CANVAS_CHANNELS = 64;
+const MAX_CANVAS_MEMBER_PROFILES = 128;
+const MAX_CANVAS_PEOPLE_PER_CHANNEL = 5;
+const MAX_CANVAS_REPOSITORIES = 64;
+const MAX_CANVAS_REVIEWS = 32;
+const MAX_CANVAS_AVATARS = 8;
+const MAX_CANVAS_AVATAR_DATA_URL_LENGTH = 48 * 1_024;
+
+function boundedCanvasText(value: string, maxLength: number): string {
+  return value.slice(0, maxLength);
+}
 
 const ChannelScreenView = React.lazy(async () => {
   const module = await import("@/features/channels/ui/ChannelScreen");
@@ -85,10 +104,243 @@ export function ProjectChannelHome({
     currentPubkey: identityQuery.data?.pubkey,
     relayUrl: activeCommunity?.relayUrl,
   });
+  const canvasReviewsQuery = useProjectPullRequestsQuery(
+    channelFeatures.primaryRepository,
+  );
   const homeChannel =
     channelsQuery.data?.find(
       (candidate) => candidate.id === project.projectChannelId,
     ) ?? null;
+  const canvasChannels = React.useMemo(() => {
+    const relatedIds = new Set(channelFeatures.breakoutChannelIds);
+    return [
+      ...(homeChannel ? [homeChannel] : []),
+      ...(channelsQuery.data ?? []).filter(
+        (candidate) =>
+          candidate.id !== homeChannel?.id && relatedIds.has(candidate.id),
+      ),
+    ].slice(0, MAX_CANVAS_CHANNELS);
+  }, [channelFeatures.breakoutChannelIds, channelsQuery.data, homeChannel]);
+  const canvasReviewRows = React.useMemo(() => {
+    const currentPubkey = identityQuery.data?.pubkey.toLowerCase();
+    if (!currentPubkey) return [];
+    return (canvasReviewsQuery.data ?? [])
+      .filter(
+        (review) =>
+          review.status === "Open" &&
+          review.author.toLowerCase() === currentPubkey,
+      )
+      .flatMap((review) => {
+        const decisions = [
+          ...review.approvals.map((decision) => ({
+            ...decision,
+            status: "Approved" as const,
+          })),
+          ...review.changeRequests.map((decision) => ({
+            ...decision,
+            status: "Changes requested" as const,
+          })),
+        ].sort(
+          (left, right) =>
+            right.createdAt - left.createdAt || right.id.localeCompare(left.id),
+        );
+        const latestDecision = decisions[0] ?? null;
+        const requestedReviewers = new Set(
+          review.reviewers.map((reviewer) => reviewer.toLowerCase()),
+        );
+        const latestReviewerActivity =
+          review.comments
+            .filter(
+              (comment) =>
+                requestedReviewers.has(comment.author.toLowerCase()) &&
+                !comment.isTrustedReviewRequest &&
+                !comment.reviewDecision &&
+                comment.inlineCommentStatus !== "outdated",
+            )
+            .sort(
+              (left, right) =>
+                right.createdAt - left.createdAt ||
+                right.id.localeCompare(left.id),
+            )[0] ?? null;
+        const agentPubkey =
+          latestDecision?.author.toLowerCase() ??
+          latestReviewerActivity?.author.toLowerCase() ??
+          [...requestedReviewers][0] ??
+          null;
+        if (!agentPubkey) return [];
+        return [
+          {
+            agentPubkey,
+            branch: review.branchName
+              ? boundedCanvasText(review.branchName, 256)
+              : null,
+            displayId: boundedCanvasText(review.id.slice(0, 8), 8),
+            id: boundedCanvasText(review.id, 256),
+            status:
+              latestDecision?.status ??
+              (latestReviewerActivity
+                ? ("Reviewing" as const)
+                : ("Requested" as const)),
+            title: boundedCanvasText(review.title, 256),
+          },
+        ];
+      })
+      .slice(0, MAX_CANVAS_REVIEWS);
+  }, [canvasReviewsQuery.data, identityQuery.data?.pubkey]);
+  const canvasProfilePubkeys = React.useMemo(
+    () =>
+      [
+        ...new Set(
+          [
+            ...canvasChannels.flatMap((candidate) => candidate.memberPubkeys),
+            ...canvasReviewRows.flatMap((review) =>
+              review.agentPubkey ? [review.agentPubkey] : [],
+            ),
+          ].map((pubkey) => pubkey.toLowerCase()),
+        ),
+      ].slice(0, MAX_CANVAS_MEMBER_PROFILES),
+    [canvasChannels, canvasReviewRows],
+  );
+  const canvasProfilesQuery = useUsersBatchQuery(canvasProfilePubkeys, {
+    enabled: canvasProfilePubkeys.length > 0,
+  });
+  const canvasAvatarCandidates = React.useMemo(
+    () =>
+      canvasProfilePubkeys
+        .flatMap((pubkey) => {
+          const avatarUrl =
+            canvasProfilesQuery.data?.profiles[pubkey]?.avatarUrl ?? null;
+          const snapshotUrl = getAvatarSnapshotUrl(avatarUrl);
+          return snapshotUrl ? [{ pubkey, snapshotUrl }] : [];
+        })
+        .slice(0, MAX_CANVAS_AVATARS),
+    [canvasProfilePubkeys, canvasProfilesQuery.data],
+  );
+  const canvasAvatarQueries = useQueries({
+    queries: canvasAvatarCandidates.map(({ pubkey, snapshotUrl }) => ({
+      gcTime: 10 * 60_000,
+      queryFn: () => fetchAvatarDataUrl(rewriteRelayUrl(snapshotUrl)),
+      queryKey: ["project-canvas-avatar", pubkey, snapshotUrl],
+      staleTime: 10 * 60_000,
+    })),
+  });
+  const canvasAvatarDataByPubkey = React.useMemo(() => {
+    const avatars = new Map<string, string>();
+    canvasAvatarCandidates.forEach((candidate, index) => {
+      const dataUrl = canvasAvatarQueries[index]?.data;
+      if (
+        dataUrl?.startsWith("data:image/") &&
+        dataUrl.length <= MAX_CANVAS_AVATAR_DATA_URL_LENGTH
+      ) {
+        avatars.set(candidate.pubkey, dataUrl);
+      }
+    });
+    return avatars;
+  }, [canvasAvatarCandidates, canvasAvatarQueries]);
+  const canvasSnapshots = React.useMemo<ProjectCanvasSnapshots>(() => {
+    const projectSummary = {
+      description: boundedCanvasText(project.description, 2_048),
+      id: boundedCanvasText(project.projectAddress, 1_024),
+      name: boundedCanvasText(project.name, 256),
+      owner: boundedCanvasText(project.owner, 64),
+      repositories: project.repositories
+        .slice(0, MAX_CANVAS_REPOSITORIES)
+        .map((repository) => ({
+          defaultBranch: boundedCanvasText(repository.defaultBranch, 256),
+          description: boundedCanvasText(repository.description, 1_024),
+          id: boundedCanvasText(repository.repoAddress, 1_024),
+          name: boundedCanvasText(repository.name, 256),
+          owner: boundedCanvasText(repository.owner, 64),
+          status: boundedCanvasText(repository.status, 64),
+        })),
+    };
+
+    const emittedCanvasAvatarPubkeys = new Set<string>();
+    const visibleChannels = canvasChannels.map((candidate) => ({
+      description: boundedCanvasText(candidate.description, 1_024),
+      id: boundedCanvasText(candidate.id, 256),
+      lastMessageAt: candidate.lastMessageAt,
+      memberCount: Math.max(0, candidate.memberCount),
+      name: boundedCanvasText(candidate.name, 256),
+      people: candidate.memberPubkeys
+        .slice(0, MAX_CANVAS_PEOPLE_PER_CHANNEL)
+        .map((pubkey) => {
+          const normalizedPubkey = pubkey.toLowerCase();
+          const profile = canvasProfilesQuery.data?.profiles[normalizedPubkey];
+          const displayName = profile?.displayName ?? profile?.name ?? null;
+          const avatarDataUrl =
+            canvasAvatarDataByPubkey.get(normalizedPubkey) ?? null;
+          const includeAvatar =
+            avatarDataUrl !== null &&
+            emittedCanvasAvatarPubkeys.size < MAX_CANVAS_AVATARS &&
+            !emittedCanvasAvatarPubkeys.has(normalizedPubkey);
+          if (includeAvatar) {
+            emittedCanvasAvatarPubkeys.add(normalizedPubkey);
+          }
+          return {
+            avatarDataUrl: includeAvatar ? avatarDataUrl : null,
+            displayName: displayName
+              ? boundedCanvasText(displayName, 128)
+              : null,
+            pubkey: boundedCanvasText(normalizedPubkey, 64),
+          };
+        }),
+      relationship:
+        candidate.id === homeChannel?.id
+          ? ("home" as const)
+          : ("related" as const),
+      topic: candidate.topic ? boundedCanvasText(candidate.topic, 512) : null,
+    }));
+    const channelsState: ProjectCanvasSnapshots["channels"] =
+      channelsQuery.isPending
+        ? { data: null, status: "loading" }
+        : channelsQuery.isError
+          ? { data: null, status: "error" }
+          : { data: visibleChannels, status: "ready" };
+
+    const reviewsState: ProjectCanvasSnapshots["reviews"] =
+      !channelFeatures.primaryRepository
+        ? { data: [], status: "ready" }
+        : canvasReviewsQuery.isPending || identityQuery.isPending
+          ? { data: null, status: "loading" }
+          : canvasReviewsQuery.isError
+            ? { data: null, status: "error" }
+            : {
+                data: canvasReviewRows.map((review) => {
+                  const profile = review.agentPubkey
+                    ? canvasProfilesQuery.data?.profiles[review.agentPubkey]
+                    : null;
+                  const agentName =
+                    profile?.displayName ?? profile?.name ?? null;
+                  return {
+                    ...review,
+                    agentName: agentName
+                      ? boundedCanvasText(agentName, 256)
+                      : null,
+                  };
+                }),
+                status: "ready",
+              };
+
+    return {
+      channels: channelsState,
+      project: { data: projectSummary, status: "ready" },
+      reviews: reviewsState,
+    };
+  }, [
+    canvasReviewsQuery.isError,
+    canvasReviewsQuery.isPending,
+    canvasAvatarDataByPubkey,
+    canvasReviewRows,
+    channelFeatures.primaryRepository,
+    canvasChannels,
+    canvasProfilesQuery.data,
+    channelsQuery.isError,
+    channelsQuery.isPending,
+    homeChannel,
+    identityQuery.isPending,
+    project,
+  ]);
   const waitingForChannel = channelsQuery.isPending && !homeChannel;
   const workspaceTab =
     activeView === "issues"
@@ -330,13 +582,18 @@ export function ProjectChannelHome({
                       ),
                       hideMainColumnBody: activeView === "canvas",
                       isChannelViewActive: activeView === "chat",
-                      mainColumnHeader: (
-                        <ProjectCanvasSurface
-                          full={activeView === "canvas"}
-                          onShowFullCanvas={() => selectView("canvas")}
-                          projectNames={[channel.name, project.name]}
-                        />
-                      ),
+                      mainColumnHeader:
+                        activeView === "chat" || activeView === "canvas" ? (
+                          <ProjectCanvasSurface
+                            communityId={activeCommunity?.id ?? null}
+                            full={activeView === "canvas"}
+                            onShowFullCanvas={() => selectView("canvas")}
+                            projectId={project.projectAddress}
+                            projectName={project.name}
+                            projectNames={[channel.name, project.name]}
+                            snapshots={canvasSnapshots}
+                          />
+                        ) : null,
                       mainContent,
                       onSelectChannelView: () => selectView("chat"),
                     }}

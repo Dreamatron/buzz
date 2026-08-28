@@ -200,6 +200,10 @@ type E2eConfig = {
     projectHeadBranch?: string;
     /** Override the built-in project's display name for project-channel specs. */
     starterProjectName?: string;
+    /** Delay Canvas activation so navigation can exercise stale reload cleanup. */
+    projectCanvasActivationDelayMs?: number;
+    /** Reject the activated Canvas candidate's render commit. */
+    projectCanvasCandidateCommitError?: string;
     /** Override the repository access channel for project authorization states. */
     projectAccessChannelId?: string;
     /** Make remote project snapshots fail with this git-facing message. */
@@ -4035,6 +4039,79 @@ function getManagedAgentRelayMembership(pubkey: string) {
 
 function getConfig(): E2eConfig | undefined {
   return window.__BUZZ_E2E__;
+}
+
+const mockProjectCanvasCandidateLoads = new Set<string>();
+
+function mockProjectCanvasPackageDescriptor(candidate = false) {
+  const loadId = crypto.randomUUID().replaceAll("-", "");
+  const nonce = `${crypto.randomUUID()}${crypto.randomUUID()}`.replaceAll(
+    "-",
+    "",
+  );
+  const shell = `<!doctype html>
+<html><head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'none'; img-src data:; media-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<style>html,body,#canvas-root{height:100%;margin:0}body{font-family:system-ui;background:#f7f7f8;color:#18181b}#canvas-root{display:grid;place-items:center}</style>
+</head><body><main id="canvas-root"></main><script>
+(() => {
+  const loadId = ${JSON.stringify(loadId)};
+  const nonce = ${JSON.stringify(nonce)};
+  const root = document.getElementById("canvas-root");
+  const connect = (event) => {
+    const message = event.data;
+    if (event.source !== parent || !message || message.type !== "host.connect" || message.protocolVersion !== 1 || message.loadId !== loadId || message.nonce !== nonce || event.ports.length !== 1) return;
+    removeEventListener("message", connect);
+    const port = event.ports[0];
+    Object.defineProperty(window, "buzzCanvas", { configurable: false, value: Object.freeze({ protocolVersion: 1, port }), writable: false });
+    port.onmessage = ({ data }) => {
+      if (!data || data.protocolVersion !== 1 || data.loadId !== loadId || data.nonce !== nonce) return;
+      if (data.type === "host.init") {
+        root.dataset.canvasReady = "true";
+        root.dataset.canvasMode = data.mode;
+        root.textContent = data.project.name;
+        try {
+          void parent.document.body;
+          root.dataset.parentDom = "allowed";
+        } catch {
+          root.dataset.parentDom = "blocked";
+        }
+        root.dataset.tauriIpc = typeof window.__TAURI_INTERNALS__ === "undefined" ? "blocked" : "allowed";
+        const popup = window.open("about:blank", "_blank");
+        root.dataset.popup = popup === null ? "blocked" : "allowed";
+        if (popup) popup.close();
+        root.dataset.network = "checking";
+        fetch("https://example.invalid/canvas-probe").then(
+          () => { root.dataset.network = "allowed"; },
+          () => { root.dataset.network = "blocked"; },
+        );
+        port.postMessage({ type: "canvas.rendered", protocolVersion: 1, loadId, nonce, dashboard: "e2e" });
+      } else if (data.type === "host.mode") {
+        root.dataset.canvasMode = data.mode;
+      } else if (data.type === "host.dataChanged") {
+        root.dataset.canvasDataChanged = "true";
+      }
+    };
+    port.start();
+  };
+  addEventListener("message", connect);
+  parent.postMessage({ type: "canvas.ready", protocolVersion: 1, nonce }, "*");
+})();
+</script></body></html>`;
+  if (candidate) mockProjectCanvasCandidateLoads.add(loadId);
+  return {
+    capabilities: [
+      "project.metadata.read",
+      "project.channels.read",
+      "project.reviews.read",
+    ],
+    data: { dashboard: "e2e", version: 1 },
+    loadId,
+    nonce,
+    revision: loadId,
+    url: `data:text/html;charset=utf-8,${encodeURIComponent(shell)}`,
+  };
 }
 
 function readStoredIdentityOverride(): TestIdentity | undefined {
@@ -13928,6 +14005,35 @@ export function maybeInstallE2eTauriMocks() {
         // Return the no-canvas success shape — content null means no canvas set.
         return { content: null, updated_at: null, author: null };
       }
+      case "get_project_canvas_package":
+        return mockProjectCanvasPackageDescriptor();
+      case "activate_project_canvas_package": {
+        const delayMs = activeConfig?.mock?.projectCanvasActivationDelayMs ?? 0;
+        if (delayMs > 0) {
+          await new Promise((resolve) => window.setTimeout(resolve, delayMs));
+        }
+        return mockProjectCanvasPackageDescriptor(true);
+      }
+      case "release_project_canvas_package": {
+        const loadId = (payload as { loadId?: string }).loadId;
+        if (loadId) mockProjectCanvasCandidateLoads.delete(loadId);
+        return null;
+      }
+      case "commit_project_canvas_package": {
+        const loadId = (payload as { loadId?: string }).loadId;
+        const commitError =
+          activeConfig?.mock?.projectCanvasCandidateCommitError;
+        if (
+          loadId &&
+          commitError &&
+          mockProjectCanvasCandidateLoads.delete(loadId)
+        ) {
+          throw new Error(commitError);
+        }
+        return null;
+      }
+      case "open_project_canvas_source":
+        return null;
       // ── Local-save archive ──────────────────────────────────────────────
       // These stubs drive the LocalArchiveSettingsCard in screenshot / UI tests
       // without requiring a real SQLite backend. `mockSaveSubscriptions` is a

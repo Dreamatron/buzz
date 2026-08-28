@@ -35,6 +35,7 @@ pub mod nostr_convert;
 mod observed_unread;
 mod persona_catalog;
 mod prevent_sleep;
+mod project_canvas_package;
 mod ptt_shortcut;
 mod relay;
 mod relay_admission;
@@ -133,7 +134,14 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_opener::init());
+    #[cfg(target_os = "macos")]
+    let builder = builder.plugin(
+        tauri::plugin::Builder::<_, ()>::new("navigation-policy")
+            .on_navigation(|_, url| project_canvas_package::allow_webview_navigation(url))
+            .build(),
+    );
+    let builder = builder
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 // Visibility is excluded: the native reveal plugin below
@@ -219,6 +227,9 @@ pub fn run() {
                 responder.respond(response);
             });
         })
+        .register_uri_scheme_protocol("buzz-canvas", |ctx, request| {
+            project_canvas_package::handle_request(ctx.app_handle(), &request)
+        })
         .manage(build_app_state())
         .manage(ClipboardState::new())
         .manage(PendingCommunityDeepLinks::default())
@@ -232,6 +243,7 @@ pub fn run() {
         .manage(native_relay_client::NativeRelayClient::default())
         .manage(observed_unread::ObservedUnreadStore::default())
         .manage(channel_head_cache::ChannelHeadCacheStore::default())
+        .manage(project_canvas_package::ProjectCanvasRuntime::default())
         .setup(move |app| {
             let app_handle = app.handle().clone();
             #[cfg(target_os = "macos")]
@@ -632,6 +644,12 @@ pub fn run() {
             leave_channel,
             get_canvas,
             set_canvas,
+            project_canvas_package::get_project_canvas_package,
+            project_canvas_package::activate_project_canvas_package,
+            project_canvas_package::commit_project_canvas_package,
+            project_canvas_package::release_project_canvas_package,
+            project_canvas_package::get_project_canvas_source,
+            project_canvas_package::open_project_canvas_source,
             get_feed,
             search_messages,
             send_channel_message,

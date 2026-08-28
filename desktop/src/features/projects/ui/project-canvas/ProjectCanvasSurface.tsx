@@ -2,16 +2,25 @@ import { Maximize2 } from "lucide-react";
 
 import { cn } from "@/shared/lib/cn";
 import { Button } from "@/shared/ui/button";
-import { ProjectCanvas } from "./ProjectCanvas";
+import { ProjectCanvasHost } from "./ProjectCanvasHost";
+import type { ProjectCanvasSnapshots } from "./projectCanvasProtocol";
 
 export function ProjectCanvasSurface({
+  communityId,
   full,
   onShowFullCanvas,
+  projectId,
+  projectName,
   projectNames,
+  snapshots,
 }: {
+  communityId: string | null;
   full: boolean;
   onShowFullCanvas: () => void;
+  projectId: string;
+  projectName: string;
   projectNames: readonly string[];
+  snapshots: ProjectCanvasSnapshots;
 }) {
   return (
     // The canvas deliberately rejects native file drops before they reach the
@@ -38,7 +47,14 @@ export function ProjectCanvasSurface({
       }}
     >
       <div className="min-h-0 flex-1">
-        <ProjectCanvas projectNames={projectNames} />
+        <ProjectCanvasHost
+          communityId={communityId}
+          full={full}
+          projectId={projectId}
+          projectName={projectName}
+          projectNames={projectNames}
+          snapshots={snapshots}
+        />
       </div>
       {full ? (
         <div
