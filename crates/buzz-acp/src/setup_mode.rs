@@ -344,7 +344,6 @@ pub(crate) async fn run_setup_listener(config: Config, payload: SetupPayload) ->
     let rest_client = relay.rest_client();
     let mut author_gate_ctx =
         crate::InboundAuthorGate::connect(&rest_client, &pubkey_hex, "setup startup").await;
-    let mut refreshed_relay_generation = 0u64;
 
     // Resolve owner for author-gate (same priority as normal mode).
     let startup_owner = crate::resolve_agent_owner(&config);
@@ -404,14 +403,13 @@ pub(crate) async fn run_setup_listener(config: Config, payload: SetupPayload) ->
             continue;
         };
 
-        crate::refresh_author_gate_for_generation(
-            &mut author_gate_ctx,
-            &rest_client,
-            &mut refreshed_relay_generation,
-            buzz_event.connection_generation,
-            "setup reconnect",
-        )
-        .await;
+        author_gate_ctx
+            .refresh_for_generation(
+                &rest_client,
+                buzz_event.connection_generation,
+                "setup listener",
+            )
+            .await;
 
         let kind_u32 = buzz_event.event.kind.as_u16() as u32;
 

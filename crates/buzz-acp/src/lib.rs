@@ -403,10 +403,12 @@ mod inbound_author_gate {
     pub(crate) struct InboundAuthorGate {
         agent_pubkey_hex: String,
         relay_self: Option<String>,
+        // None means no authoritative NIP-11 result yet, including at startup.
+        refreshed_generation: Option<u64>,
     }
 
-    pub(crate) fn refresh_needed(refreshed_generation: u64, event_generation: u64) -> bool {
-        event_generation > refreshed_generation
+    pub(crate) fn refresh_needed(refreshed_generation: Option<u64>, event_generation: u64) -> bool {
+        refreshed_generation.is_none_or(|generation| event_generation > generation)
     }
 
     impl InboundAuthorGate {
@@ -416,9 +418,27 @@ mod inbound_author_gate {
             agent_pubkey_hex: &str,
             context: &str,
         ) -> Self {
+            let (relay_self, completed) = refresh_relay_self(rest_client, None, context).await;
             Self {
                 agent_pubkey_hex: agent_pubkey_hex.to_string(),
-                relay_self: refresh_relay_self(rest_client, None, context).await.0,
+                relay_self,
+                refreshed_generation: completed.then_some(0),
+            }
+        }
+
+        /// Retry pending identity discovery before handling an event, including
+        /// generation 0 when the startup lookup failed. Only an authoritative
+        /// response completes a generation; failures remain eligible to retry.
+        pub(crate) async fn refresh_for_generation(
+            &mut self,
+            rest_client: &relay::RestClient,
+            event_generation: u64,
+            context: &str,
+        ) {
+            if refresh_needed(self.refreshed_generation, event_generation)
+                && self.refresh(rest_client, context).await
+            {
+                self.refreshed_generation = Some(event_generation);
             }
         }
 
@@ -527,22 +547,6 @@ mod inbound_author_gate {
             )
             .await
         }
-    }
-}
-
-async fn refresh_author_gate_for_generation(
-    author_gate: &mut InboundAuthorGate,
-    rest_client: &relay::RestClient,
-    refreshed_generation: &mut u64,
-    event_generation: u64,
-    context: &str,
-) {
-    if !inbound_author_gate::refresh_needed(*refreshed_generation, event_generation) {
-        return;
-    }
-
-    if author_gate.refresh(rest_client, context).await {
-        *refreshed_generation = event_generation;
     }
 }
 
@@ -2328,7 +2332,6 @@ async fn tokio_main() -> Result<()> {
     let relay_rest_client = relay.rest_client();
     let mut author_gate_ctx =
         InboundAuthorGate::connect(&relay_rest_client, &pubkey_hex, "startup").await;
-    let mut refreshed_relay_generation = 0u64;
 
     relay
         .subscribe_membership_notifications()
@@ -2941,14 +2944,13 @@ async fn tokio_main() -> Result<()> {
                     let _ = result_rx; // end split borrow before relay handling
                     match buzz_event {
                         Some(buzz_event) => {
-                            refresh_author_gate_for_generation(
-                                &mut author_gate_ctx,
-                                &relay_rest_client,
-                                &mut refreshed_relay_generation,
-                                buzz_event.connection_generation,
-                                "reconnect",
-                            )
-                            .await;
+                            author_gate_ctx
+                                .refresh_for_generation(
+                                    &relay_rest_client,
+                                    buzz_event.connection_generation,
+                                    "listener",
+                                )
+                                .await;
                             let kind_u32 = buzz_event.event.kind.as_u16() as u32;
 
                             if kind_u32 == KIND_MEMBER_ADDED_NOTIFICATION
@@ -6273,11 +6275,108 @@ mod author_gate_tests {
     }
 
     #[test]
-    fn listener_refreshes_exactly_once_per_connection_generation() {
-        assert!(!super::inbound_author_gate::refresh_needed(0, 0));
-        assert!(super::inbound_author_gate::refresh_needed(0, 1));
-        assert!(!super::inbound_author_gate::refresh_needed(1, 1));
-        assert!(super::inbound_author_gate::refresh_needed(1, 2));
+    fn refresh_needed_until_generation_completes() {
+        use super::inbound_author_gate::refresh_needed;
+        assert!(refresh_needed(None, 0));
+        assert!(refresh_needed(None, 1));
+        assert!(!refresh_needed(Some(0), 0));
+        assert!(refresh_needed(Some(0), 1));
+        assert!(!refresh_needed(Some(1), 1));
+        assert!(!refresh_needed(Some(1), 0));
+        assert!(refresh_needed(Some(1), 2));
+    }
+
+    #[tokio::test]
+    async fn test_generation_zero_retries_failed_startup_identity() {
+        let relay_keys = nostr::Keys::generate();
+        let relay_hex = relay_keys.public_key().to_hex();
+        let agent = nostr::Keys::generate().public_key().to_hex();
+        let workflow_owner = nostr::Keys::generate().public_key().to_hex();
+        // Both startup probes fail; HTTP then recovers without a WS reconnect.
+        let (rest_client, server) = nip11_scripted_server(std::collections::VecDeque::from([
+            Err(()),
+            Err(()),
+            Ok(serde_json::json!({ "self": relay_hex.clone() })),
+        ]))
+        .await;
+        let mut gate = InboundAuthorGate::connect(&rest_client, &agent, "startup").await;
+        assert!(!gate.has_relay_identity());
+        let channel_id = Uuid::new_v4();
+        let owner_cache = OwnerCache::new(Some(workflow_owner.clone()));
+        owner_cache.cache_sibling(relay_hex.clone(), false);
+        let channel_info = pool::ChannelInfoResolver::new(
+            HashMap::from([(
+                channel_id,
+                relay::ChannelInfo {
+                    name: "workflow".into(),
+                    channel_type: "stream".into(),
+                    description: None,
+                },
+            )]),
+            rest_client.clone(),
+        );
+        let event = relay::BuzzEvent {
+            connection_generation: 0,
+            channel_id,
+            event: relay_signed_workflow_dispatch(&relay_keys, &workflow_owner, &agent),
+        };
+        gate.refresh_for_generation(&rest_client, event.connection_generation, "startup retry")
+            .await;
+        let decision = gate
+            .evaluate_listener_event(
+                &event,
+                &RespondTo::OwnerOnly,
+                &HashSet::new(),
+                &owner_cache,
+                &channel_info,
+                &rest_client,
+            )
+            .await;
+        server.abort();
+        assert!(
+            decision.allowed,
+            "a generation-0 workflow wake must recover after the startup NIP-11 failure"
+        );
+        assert_eq!(decision.effective_author, workflow_owner);
+    }
+
+    #[tokio::test]
+    async fn test_authoritative_startup_result_completes_generation_zero() {
+        let relay_hex = nostr::Keys::generate().public_key().to_hex();
+        let next_relay_hex = nostr::Keys::generate().public_key().to_hex();
+        let agent = nostr::Keys::generate().public_key().to_hex();
+        for identity in [Some(relay_hex.clone()), None] {
+            let document = match &identity {
+                Some(key) => serde_json::json!({ "self": key }),
+                None => serde_json::json!({ "name": "relay without stable identity" }),
+            };
+            let mut responses = std::collections::VecDeque::from([Ok(document.clone())]);
+            if identity.is_none() {
+                // A missing `self` probes /info as well as the root.
+                responses.push_back(Ok(document));
+            }
+            responses.push_back(Ok(serde_json::json!({ "self": next_relay_hex.clone() })));
+            let (rest_client, server) = nip11_scripted_server(responses).await;
+            let mut gate = InboundAuthorGate::connect(&rest_client, &agent, "startup").await;
+            assert_eq!(gate.relay_identity_for_test(), identity.as_deref());
+            for _ in 0..2 {
+                gate.refresh_for_generation(&rest_client, 0, "same connection")
+                    .await;
+                assert_eq!(
+                    gate.relay_identity_for_test(),
+                    identity.as_deref(),
+                    "an authoritative startup response must not be fetched again at generation 0"
+                );
+            }
+            gate.refresh_for_generation(&rest_client, 1, "reconnect")
+                .await;
+            assert_eq!(
+                gate.relay_identity_for_test(),
+                Some(next_relay_hex.as_str()),
+                "a later connection must still refresh after authoritative startup"
+            );
+            server.abort();
+        }
     }
 
     #[tokio::test]
@@ -6311,7 +6410,6 @@ mod author_gate_tests {
             )]),
             rest_client.clone(),
         );
-        let mut refreshed_generation = 1;
 
         assert_eq!(gate.relay_identity_for_test(), Some(old_relay_hex.as_str()));
 
@@ -6320,18 +6418,8 @@ mod author_gate_tests {
             channel_id,
             event: relay_signed_workflow_dispatch(&new_relay, &workflow_owner, &agent),
         };
-        refresh_author_gate_for_generation(
-            &mut gate,
-            &rest_client,
-            &mut refreshed_generation,
-            new_event.connection_generation,
-            "reconnect",
-        )
-        .await;
-        assert_eq!(
-            refreshed_generation, 1,
-            "a failed NIP-11 refresh must leave the generation pending"
-        );
+        gate.refresh_for_generation(&rest_client, new_event.connection_generation, "reconnect")
+            .await;
         assert_eq!(gate.relay_identity_for_test(), Some(old_relay_hex.as_str()));
         let first_new = gate
             .evaluate_listener_event(
@@ -6348,15 +6436,12 @@ mod author_gate_tests {
             "the new signer must remain fail-closed while NIP-11 is unavailable"
         );
 
-        refresh_author_gate_for_generation(
-            &mut gate,
+        gate.refresh_for_generation(
             &rest_client,
-            &mut refreshed_generation,
             new_event.connection_generation,
             "reconnect retry",
         )
         .await;
-        assert_eq!(refreshed_generation, 2);
         assert_eq!(gate.relay_identity_for_test(), Some(new_relay_hex.as_str()));
 
         let stale_old_event = relay::BuzzEvent {
@@ -6389,7 +6474,7 @@ mod author_gate_tests {
         assert_eq!(first_new.effective_author, workflow_owner);
         assert!(
             first_new.allowed,
-            "the first event from the new connection must use the refreshed relay key"
+            "a later event on the same connection must use the refreshed relay key"
         );
         server.abort();
     }
