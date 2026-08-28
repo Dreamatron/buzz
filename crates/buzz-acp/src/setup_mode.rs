@@ -73,7 +73,8 @@ pub(crate) enum AcpAvailabilityStatus {
 use crate::{
     config::Config,
     event_mentions_agent, filter,
-    relay::{HarnessRelay, RelayEventPublisher},
+    relay::{self, HarnessRelay, RelayEventPublisher},
+    InboundAuthorGate, InboundAuthorGateDecision, OwnerCache,
 };
 
 // ── Payload ───────────────────────────────────────────────────────────────────
@@ -430,17 +431,17 @@ pub(crate) async fn run_setup_listener(config: Config, payload: SetupPayload) ->
         // Apply the same author gate as normal mode so the nudge only goes
         // to authors the real agent would have answered. Same DM hardening:
         // in DMs only owner/siblings get a nudge (fail-closed on unknown type).
-        let author_gate = author_gate_ctx
-            .evaluate_listener_event(
-                &buzz_event,
-                &config.respond_to,
-                &config.respond_to_allowlist,
-                &owner_cache,
-                &channel_info,
-                &rest_client,
-            )
-            .await;
-        let allowed = author_gate.allowed;
+        let allowed = evaluate_setup_listener_author(
+            &mut author_gate_ctx,
+            &buzz_event,
+            &config.respond_to,
+            &config.respond_to_allowlist,
+            &owner_cache,
+            &channel_info,
+            &rest_client,
+        )
+        .await
+        .allowed;
 
         // Apply channel/kind filter rules.
         let filter_matched = filter::match_event(
@@ -483,6 +484,27 @@ pub(crate) async fn run_setup_listener(config: Config, payload: SetupPayload) ->
     }
 
     Ok(())
+}
+
+pub(super) async fn evaluate_setup_listener_author(
+    author_gate: &mut InboundAuthorGate,
+    buzz_event: &relay::BuzzEvent,
+    respond_to: &crate::config::RespondTo,
+    allowlist: &HashSet<String>,
+    owner_cache: &OwnerCache,
+    channel_info: &crate::pool::ChannelInfoResolver,
+    rest_client: &relay::RestClient,
+) -> InboundAuthorGateDecision {
+    author_gate
+        .evaluate_listener_event(
+            buzz_event,
+            respond_to,
+            allowlist,
+            owner_cache,
+            channel_info,
+            rest_client,
+        )
+        .await
 }
 
 /// Outcome of the pure per-event gate checks in setup mode.
