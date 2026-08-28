@@ -426,37 +426,6 @@ mod inbound_author_gate {
             }
         }
 
-        /// Retry pending identity discovery before handling an event, including
-        /// generation 0 when the startup lookup failed. Only an authoritative
-        /// response completes a generation; failures remain eligible to retry.
-        pub(crate) async fn refresh_for_generation(
-            &mut self,
-            rest_client: &relay::RestClient,
-            event_generation: u64,
-            context: &str,
-        ) {
-            if refresh_needed(self.refreshed_generation, event_generation)
-                && self.refresh(rest_client, context).await
-            {
-                self.refreshed_generation = Some(event_generation);
-            }
-        }
-
-        /// Re-read the relay signing identity after a reconnect, retaining the
-        /// last verified key on a transient failure (see
-        /// [`refresh_relay_self`]). Returns whether NIP-11 produced an
-        /// authoritative document, including one without a `self` key.
-        pub(crate) async fn refresh(
-            &mut self,
-            rest_client: &relay::RestClient,
-            context: &str,
-        ) -> bool {
-            let (relay_self, completed) =
-                refresh_relay_self(rest_client, self.relay_self.take(), context).await;
-            self.relay_self = relay_self;
-            completed
-        }
-
         /// Whether delegated workflow attribution is currently available.
         ///
         /// Test-only: production code never branches on this.
@@ -473,14 +442,14 @@ mod inbound_author_gate {
             self.relay_self.as_deref()
         }
 
-        /// Resolve channel trust, trusted workflow attribution, and author policy
-        /// for one listener event.
+        /// Refresh relay identity, resolve channel trust, and apply trusted
+        /// workflow attribution and author policy for one listener event.
         ///
-        /// Both production listeners call this exact boundary. The raw-author
-        /// policy and relay identity are private to this module, so replacing a
-        /// listener call with raw-signer authorization is not expressible.
+        /// Both production listeners call this exact boundary. Identity refresh
+        /// cannot be omitted independently of authorization; the raw-author
+        /// policy and relay identity are private to this module.
         pub(crate) async fn evaluate_listener_event(
-            &self,
+            &mut self,
             buzz_event: &relay::BuzzEvent,
             respond_to: &RespondTo,
             allowlist: &HashSet<String>,
@@ -488,6 +457,17 @@ mod inbound_author_gate {
             channel_info: &pool::ChannelInfoResolver,
             rest_client: &relay::RestClient,
         ) -> InboundAuthorGateDecision {
+            // Retry failed startup discovery on generation 0 as well as failed
+            // reconnect refreshes. Only an authoritative result completes the
+            // generation; transient failure retains the last verified key.
+            if refresh_needed(self.refreshed_generation, buzz_event.connection_generation) {
+                let (relay_self, completed) =
+                    refresh_relay_self(rest_client, self.relay_self.take(), "listener").await;
+                self.relay_self = relay_self;
+                if completed {
+                    self.refreshed_generation = Some(buzz_event.connection_generation);
+                }
+            }
             let is_dm = is_dm_channel(buzz_event.channel_id, channel_info).await;
             self.evaluate_with_channel_trust(
                 &buzz_event.event,
@@ -557,8 +537,9 @@ use inbound_author_gate::InboundAuthorGate;
 /// key so a reconnect blip cannot disable workflow wakes. That availability
 /// tradeoff creates a bounded-by-success revocation window: a rotated-away key
 /// remains trusted while NIP-11 refreshes keep failing, then is replaced or
-/// cleared by the next successful response. Refresh currently runs at startup
-/// and reconnect, so rotation is not observed until a reconnect.
+/// cleared by the next successful response. Refresh runs at startup and before
+/// authorization on a new or still-pending generation; a completed generation
+/// is not refreshed again until a reconnect.
 async fn refresh_relay_self(
     rest_client: &relay::RestClient,
     current: Option<String>,
@@ -2944,13 +2925,6 @@ async fn tokio_main() -> Result<()> {
                     let _ = result_rx; // end split borrow before relay handling
                     match buzz_event {
                         Some(buzz_event) => {
-                            author_gate_ctx
-                                .refresh_for_generation(
-                                    &relay_rest_client,
-                                    buzz_event.connection_generation,
-                                    "listener",
-                                )
-                                .await;
                             let kind_u32 = buzz_event.event.kind.as_u16() as u32;
 
                             if kind_u32 == KIND_MEMBER_ADDED_NOTIFICATION
@@ -3312,9 +3286,6 @@ async fn tokio_main() -> Result<()> {
                                 tokio::time::sleep(Duration::from_secs(1)).await;
                                 break;
                             }
-                            author_gate_ctx
-                                .refresh(&relay_rest_client, "reconnect")
-                                .await;
                         }
                     }
                     None
@@ -6118,8 +6089,8 @@ mod author_gate_tests {
 
     /// The listener decision-boundary regression.
     ///
-    /// Both listeners call `evaluate_listener_event`; it owns channel trust,
-    /// workflow attribution, and raw-author policy, with no production-visible
+    /// Both listeners call `evaluate_listener_event`; it owns identity refresh,
+    /// channel trust, workflow attribution, and policy, with no production-visible
     /// raw-policy helper alongside it. This test drives that exact callable
     /// against a live NIP-11 document, so it fails if identity loading,
     /// effective-author resolution, DM classification, or policy application
@@ -6134,7 +6105,7 @@ mod author_gate_tests {
         let agent = nostr::Keys::generate().public_key().to_hex();
         let (rest_client, server) = nip11_server(serde_json::json!({ "self": relay_hex })).await;
 
-        let gate = InboundAuthorGate::connect(&rest_client, &agent, "test").await;
+        let mut gate = InboundAuthorGate::connect(&rest_client, &agent, "test").await;
         assert!(
             gate.has_relay_identity(),
             "the gate must load the relay signing identity during construction"
@@ -6229,9 +6200,9 @@ mod author_gate_tests {
         server.abort();
     }
 
-    /// A reconnect must re-arm attribution rather than leaving the listener
-    /// permanently degraded: `refresh` is the only path that updates the
-    /// identity after construction, and both listeners call it on reconnect.
+    /// The first authorized event after reconnect must restore attribution
+    /// through the same decision boundary both listeners use, without a
+    /// separate identity-refresh call.
     #[tokio::test]
     async fn test_gate_refresh_arms_attribution_after_reconnect() {
         let relay_keys = nostr::Keys::generate();
@@ -6249,20 +6220,36 @@ mod author_gate_tests {
         assert!(!gate.has_relay_identity());
 
         let (rest_client, server) = nip11_server(serde_json::json!({ "self": relay_hex })).await;
-        gate.refresh(&rest_client, "test reconnect").await;
-
         let workflow_owner = nostr::Keys::generate().public_key().to_hex();
         let event = relay_signed_workflow_dispatch(&relay_keys, &workflow_owner, &agent);
         let cache = cache_with_sibling();
         cache.cache_sibling(workflow_owner.clone(), true);
+        cache.cache_sibling(relay_hex, false);
+        let channel_id = Uuid::new_v4();
+        let channel_info = pool::ChannelInfoResolver::new(
+            HashMap::from([(
+                channel_id,
+                relay::ChannelInfo {
+                    name: "workflow".into(),
+                    channel_type: "stream".into(),
+                    description: None,
+                },
+            )]),
+            rest_client.clone(),
+        );
+        let buzz_event = relay::BuzzEvent {
+            connection_generation: 1,
+            channel_id,
+            event,
+        };
 
         let decision = gate
-            .evaluate_for_test(
-                &event,
+            .evaluate_listener_event(
+                &buzz_event,
                 &RespondTo::OwnerOnly,
                 &HashSet::new(),
-                false,
                 &cache,
+                &channel_info,
                 &rest_client,
             )
             .await;
@@ -6320,8 +6307,6 @@ mod author_gate_tests {
             channel_id,
             event: relay_signed_workflow_dispatch(&relay_keys, &workflow_owner, &agent),
         };
-        gate.refresh_for_generation(&rest_client, event.connection_generation, "startup retry")
-            .await;
         let decision = gate
             .evaluate_listener_event(
                 &event,
@@ -6342,9 +6327,15 @@ mod author_gate_tests {
 
     #[tokio::test]
     async fn test_authoritative_startup_result_completes_generation_zero() {
-        let relay_hex = nostr::Keys::generate().public_key().to_hex();
-        let next_relay_hex = nostr::Keys::generate().public_key().to_hex();
+        let relay_keys = nostr::Keys::generate();
+        let next_relay_keys = nostr::Keys::generate();
+        let relay_hex = relay_keys.public_key().to_hex();
+        let next_relay_hex = next_relay_keys.public_key().to_hex();
         let agent = nostr::Keys::generate().public_key().to_hex();
+        let workflow_owner = nostr::Keys::generate().public_key().to_hex();
+        let owner_cache = OwnerCache::new(Some(workflow_owner.clone()));
+        owner_cache.cache_sibling(relay_hex.clone(), false);
+        owner_cache.cache_sibling(next_relay_hex.clone(), false);
         for identity in [Some(relay_hex.clone()), None] {
             let document = match &identity {
                 Some(key) => serde_json::json!({ "self": key }),
@@ -6359,17 +6350,55 @@ mod author_gate_tests {
             let (rest_client, server) = nip11_scripted_server(responses).await;
             let mut gate = InboundAuthorGate::connect(&rest_client, &agent, "startup").await;
             assert_eq!(gate.relay_identity_for_test(), identity.as_deref());
+            let channel_id = Uuid::new_v4();
+            let channel_info = pool::ChannelInfoResolver::new(
+                HashMap::from([(
+                    channel_id,
+                    relay::ChannelInfo {
+                        name: "workflow".into(),
+                        channel_type: "stream".into(),
+                        description: None,
+                    },
+                )]),
+                rest_client.clone(),
+            );
+            let mut event = relay::BuzzEvent {
+                connection_generation: 0,
+                channel_id,
+                event: relay_signed_workflow_dispatch(&relay_keys, &workflow_owner, &agent),
+            };
             for _ in 0..2 {
-                gate.refresh_for_generation(&rest_client, 0, "same connection")
+                let decision = gate
+                    .evaluate_listener_event(
+                        &event,
+                        &RespondTo::OwnerOnly,
+                        &HashSet::new(),
+                        &owner_cache,
+                        &channel_info,
+                        &rest_client,
+                    )
                     .await;
+                assert_eq!(decision.allowed, identity.is_some());
                 assert_eq!(
                     gate.relay_identity_for_test(),
                     identity.as_deref(),
                     "an authoritative startup response must not be fetched again at generation 0"
                 );
             }
-            gate.refresh_for_generation(&rest_client, 1, "reconnect")
+            event.connection_generation = 1;
+            event.event = relay_signed_workflow_dispatch(&next_relay_keys, &workflow_owner, &agent);
+            let decision = gate
+                .evaluate_listener_event(
+                    &event,
+                    &RespondTo::OwnerOnly,
+                    &HashSet::new(),
+                    &owner_cache,
+                    &channel_info,
+                    &rest_client,
+                )
                 .await;
+            assert!(decision.allowed);
+            assert_eq!(decision.effective_author, workflow_owner);
             assert_eq!(
                 gate.relay_identity_for_test(),
                 Some(next_relay_hex.as_str()),
@@ -6418,9 +6447,6 @@ mod author_gate_tests {
             channel_id,
             event: relay_signed_workflow_dispatch(&new_relay, &workflow_owner, &agent),
         };
-        gate.refresh_for_generation(&rest_client, new_event.connection_generation, "reconnect")
-            .await;
-        assert_eq!(gate.relay_identity_for_test(), Some(old_relay_hex.as_str()));
         let first_new = gate
             .evaluate_listener_event(
                 &new_event,
@@ -6431,18 +6457,28 @@ mod author_gate_tests {
                 &rest_client,
             )
             .await;
+        assert_eq!(gate.relay_identity_for_test(), Some(old_relay_hex.as_str()));
         assert!(
             !first_new.allowed,
             "the new signer must remain fail-closed while NIP-11 is unavailable"
         );
 
-        gate.refresh_for_generation(
-            &rest_client,
-            new_event.connection_generation,
-            "reconnect retry",
-        )
-        .await;
+        let recovered = gate
+            .evaluate_listener_event(
+                &new_event,
+                &RespondTo::OwnerOnly,
+                &HashSet::new(),
+                &owner_cache,
+                &channel_info,
+                &rest_client,
+            )
+            .await;
         assert_eq!(gate.relay_identity_for_test(), Some(new_relay_hex.as_str()));
+        assert_eq!(recovered.effective_author, workflow_owner);
+        assert!(
+            recovered.allowed,
+            "a later event on the same connection must use the refreshed relay key"
+        );
 
         let stale_old_event = relay::BuzzEvent {
             connection_generation: 2,
@@ -6461,21 +6497,6 @@ mod author_gate_tests {
             .await;
         assert!(!stale.allowed, "the rotated-away relay key must be evicted");
 
-        let first_new = gate
-            .evaluate_listener_event(
-                &new_event,
-                &RespondTo::OwnerOnly,
-                &HashSet::new(),
-                &owner_cache,
-                &channel_info,
-                &rest_client,
-            )
-            .await;
-        assert_eq!(first_new.effective_author, workflow_owner);
-        assert!(
-            first_new.allowed,
-            "a later event on the same connection must use the refreshed relay key"
-        );
         server.abort();
     }
 

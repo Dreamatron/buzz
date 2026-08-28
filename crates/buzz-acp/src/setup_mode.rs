@@ -397,19 +397,8 @@ pub(crate) async fn run_setup_listener(config: Config, payload: SetupPayload) ->
                 tracing::error!("setup-mode: relay background task is gone: {e} — exiting");
                 break;
             }
-            author_gate_ctx
-                .refresh(&rest_client, "setup reconnect")
-                .await;
             continue;
         };
-
-        author_gate_ctx
-            .refresh_for_generation(
-                &rest_client,
-                buzz_event.connection_generation,
-                "setup listener",
-            )
-            .await;
 
         let kind_u32 = buzz_event.event.kind.as_u16() as u32;
 
