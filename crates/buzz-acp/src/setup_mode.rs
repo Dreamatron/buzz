@@ -433,14 +433,14 @@ pub(crate) async fn run_setup_listener(config: Config, payload: SetupPayload) ->
         // Apply the same author gate as normal mode so the nudge only goes
         // to authors the real agent would have answered. Same DM hardening:
         // in DMs only owner/siblings get a nudge (fail-closed on unknown type).
-        let is_dm = crate::is_dm_channel(buzz_event.channel_id, &channel_info).await;
         let author_gate = author_gate_ctx
-            .evaluate(
+            .evaluate_listener_event(
                 &buzz_event.event,
+                buzz_event.channel_id,
                 &config.respond_to,
                 &config.respond_to_allowlist,
-                is_dm,
                 &owner_cache,
+                &channel_info,
                 &rest_client,
             )
             .await;

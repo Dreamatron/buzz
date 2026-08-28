@@ -233,48 +233,6 @@ async fn is_owner_or_sibling(
     is_sibling
 }
 
-/// Inbound author gate decision: does this author's event fire a turn?
-///
-/// Coarse security policy applied before subscription rules. Both `OwnerOnly`
-/// and `Allowlist` accept the owner and same-owner siblings; `Allowlist`
-/// additionally accepts the explicit external pubkey list.
-///
-/// # DM hardening (`is_dm`)
-///
-/// Clients auto-p-tag every DM participant, so in a DM *any* participant's
-/// message looks like a mention and would fire a turn. Combined with
-/// agent-initiated DMs (the agent can be asked to DM a third party), that
-/// turns `anyone`/`allowlist` modes into transitive access grants: whoever
-/// lands in a DM with the agent can prompt it. To close that hole, when
-/// `is_dm` is true only the owner and cryptographically verified same-owner
-/// siblings may fire a turn — the explicit allowlist and `anyone` mode do
-/// NOT apply inside DMs. `Nobody` still drops everything. Callers must
-/// resolve `is_dm` fail-closed: unknown channel type ⇒ treat as DM.
-async fn author_allowed(
-    respond_to: &RespondTo,
-    allowlist: &HashSet<String>,
-    author: &str,
-    is_dm: bool,
-    owner_cache: &OwnerCache,
-    rest_client: &relay::RestClient,
-) -> bool {
-    if is_dm {
-        return match respond_to {
-            RespondTo::Nobody => false,
-            _ => is_owner_or_sibling(author, owner_cache, rest_client).await,
-        };
-    }
-    match respond_to {
-        RespondTo::Anyone => true,
-        RespondTo::Nobody => false,
-        RespondTo::OwnerOnly => is_owner_or_sibling(author, owner_cache, rest_client).await,
-        RespondTo::Allowlist => {
-            allowlist.contains(author)
-                || is_owner_or_sibling(author, owner_cache, rest_client).await
-        }
-    }
-}
-
 /// Return the workflow owner attributed by a relay-signed workflow message.
 ///
 /// `buzz:workflow-owner` alone is not authority: any ordinary event author can
@@ -367,6 +325,7 @@ fn effective_prompt_author(
 struct InboundAuthorGateDecision {
     effective_author: String,
     allowed: bool,
+    is_dm: bool,
 }
 
 /// Owns the verified relay signing identity for a listener's lifetime and
@@ -387,10 +346,60 @@ struct InboundAuthorGateDecision {
 /// dropping the load inside it fails the construction regressions.
 mod inbound_author_gate {
     use super::{
-        author_allowed, effective_prompt_author, refresh_relay_self, relay,
-        InboundAuthorGateDecision, OwnerCache, RespondTo,
+        effective_prompt_author, is_dm_channel, is_owner_or_sibling, pool, refresh_relay_self,
+        relay, InboundAuthorGateDecision, OwnerCache, RespondTo,
     };
     use std::collections::HashSet;
+    use uuid::Uuid;
+
+    /// Apply the configured raw-author policy after trusted workflow attribution.
+    ///
+    /// This stays private to the gate module so neither listener can bypass
+    /// workflow attribution by calling the raw-signer policy directly.
+    async fn author_allowed(
+        respond_to: &RespondTo,
+        allowlist: &HashSet<String>,
+        author: &str,
+        is_dm: bool,
+        owner_cache: &OwnerCache,
+        rest_client: &relay::RestClient,
+    ) -> bool {
+        if is_dm {
+            return match respond_to {
+                RespondTo::Nobody => false,
+                _ => is_owner_or_sibling(author, owner_cache, rest_client).await,
+            };
+        }
+        match respond_to {
+            RespondTo::Anyone => true,
+            RespondTo::Nobody => false,
+            RespondTo::OwnerOnly => is_owner_or_sibling(author, owner_cache, rest_client).await,
+            RespondTo::Allowlist => {
+                allowlist.contains(author)
+                    || is_owner_or_sibling(author, owner_cache, rest_client).await
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) async fn test_author_allowed(
+        respond_to: &RespondTo,
+        allowlist: &HashSet<String>,
+        author: &str,
+        is_dm: bool,
+        owner_cache: &OwnerCache,
+        rest_client: &relay::RestClient,
+    ) -> bool {
+        author_allowed(
+            respond_to,
+            allowlist,
+            author,
+            is_dm,
+            owner_cache,
+            rest_client,
+        )
+        .await
+    }
 
     pub(crate) struct InboundAuthorGate {
         agent_pubkey_hex: String,
@@ -429,11 +438,35 @@ mod inbound_author_gate {
             self.relay_self.is_some()
         }
 
-        /// Resolve the effective author for `event` and apply the author policy.
+        /// Resolve channel trust, trusted workflow attribution, and author policy
+        /// for one listener event.
         ///
-        /// The relay identity is read from `self`, never from a parameter, so no
-        /// caller can evaluate an event with attribution disabled.
-        pub(crate) async fn evaluate(
+        /// Both production listeners call this exact boundary. The raw-author
+        /// policy and relay identity are private to this module, so replacing a
+        /// listener call with raw-signer authorization is not expressible.
+        pub(crate) async fn evaluate_listener_event(
+            &self,
+            event: &nostr::Event,
+            channel_id: Uuid,
+            respond_to: &RespondTo,
+            allowlist: &HashSet<String>,
+            owner_cache: &OwnerCache,
+            channel_info: &pool::ChannelInfoResolver,
+            rest_client: &relay::RestClient,
+        ) -> InboundAuthorGateDecision {
+            let is_dm = is_dm_channel(channel_id, channel_info).await;
+            self.evaluate_with_channel_trust(
+                event,
+                respond_to,
+                allowlist,
+                is_dm,
+                owner_cache,
+                rest_client,
+            )
+            .await
+        }
+
+        async fn evaluate_with_channel_trust(
             &self,
             event: &nostr::Event,
             respond_to: &RespondTo,
@@ -456,7 +489,29 @@ mod inbound_author_gate {
             InboundAuthorGateDecision {
                 effective_author,
                 allowed,
+                is_dm,
             }
+        }
+
+        #[cfg(test)]
+        pub(crate) async fn evaluate_for_test(
+            &self,
+            event: &nostr::Event,
+            respond_to: &RespondTo,
+            allowlist: &HashSet<String>,
+            is_dm: bool,
+            owner_cache: &OwnerCache,
+            rest_client: &relay::RestClient,
+        ) -> InboundAuthorGateDecision {
+            self.evaluate_with_channel_trust(
+                event,
+                respond_to,
+                allowlist,
+                is_dm,
+                owner_cache,
+                rest_client,
+            )
+            .await
         }
     }
 }
@@ -3092,15 +3147,14 @@ async fn tokio_main() -> Result<()> {
                             // launched by the same human). Allowlist adds the
                             // explicit pubkey list on top, for external people;
                             // it never revokes same-owner team bots.
-                            let is_dm =
-                                is_dm_channel(buzz_event.channel_id, &ctx.channel_info).await;
                             let author_gate = author_gate_ctx
-                                .evaluate(
+                                .evaluate_listener_event(
                                     &buzz_event.event,
+                                    buzz_event.channel_id,
                                     &config.respond_to,
                                     &config.respond_to_allowlist,
-                                    is_dm,
                                     &owner_cache,
+                                    &ctx.channel_info,
                                     &ctx.rest_client,
                                 )
                                 .await;
@@ -3111,7 +3165,7 @@ async fn tokio_main() -> Result<()> {
                                     raw_author = %buzz_event.event.pubkey.to_hex(),
                                     effective_author = %author_hex,
                                     mode = %config.respond_to,
-                                    is_dm,
+                                    is_dm = author_gate.is_dm,
                                     "inbound author gate — dropping event"
                                 );
                                 continue;
@@ -5994,15 +6048,16 @@ mod author_gate_tests {
             .expect("signed workflow event")
     }
 
-    /// The listener-to-gate wiring regression.
+    /// The listener decision-boundary regression.
     ///
-    /// Both listeners build their gate with `InboundAuthorGate::connect` and
-    /// then call `evaluate` per event, with no relay-identity argument in
-    /// between. This test drives that exact sequence against a live NIP-11
-    /// document, so it fails if the identity load is dropped from construction,
-    /// if `evaluate` stops consulting the loaded identity, or if attribution
-    /// inside the shared gate regresses to the raw relay signer — the wake
-    /// failure that motivated this change.
+    /// Both listeners call `evaluate_listener_event`; it owns channel trust,
+    /// workflow attribution, and raw-author policy, with no production-visible
+    /// raw-policy helper alongside it. This test drives that exact callable
+    /// against a live NIP-11 document, so it fails if identity loading,
+    /// effective-author resolution, DM classification, or policy application
+    /// regresses. Replacing either listener call with the former raw-signer
+    /// `author_allowed` path is now a compile error because that policy is
+    /// private to the gate module.
     #[tokio::test]
     async fn test_connected_gate_wakes_owner_only_agent_for_relay_signed_workflow() {
         let relay_keys = nostr::Keys::generate();
@@ -6022,13 +6077,26 @@ mod author_gate_tests {
         cache.cache_sibling(workflow_owner.clone(), true);
         cache.cache_sibling(relay_hex.clone(), false);
 
+        let channel_id = Uuid::new_v4();
+        let channel_info = pool::ChannelInfoResolver::new(
+            HashMap::from([(
+                channel_id,
+                relay::ChannelInfo {
+                    name: "workflow".into(),
+                    channel_type: "stream".into(),
+                    description: None,
+                },
+            )]),
+            rest_client.clone(),
+        );
         let decision = gate
-            .evaluate(
+            .evaluate_listener_event(
                 &event,
+                channel_id,
                 &RespondTo::OwnerOnly,
                 &HashSet::new(),
-                false,
                 &cache,
+                &channel_info,
                 &rest_client,
             )
             .await;
@@ -6068,7 +6136,7 @@ mod author_gate_tests {
         cache.cache_sibling(relay_hex.clone(), false);
 
         let decision = gate
-            .evaluate(
+            .evaluate_for_test(
                 &event,
                 &RespondTo::OwnerOnly,
                 &HashSet::new(),
@@ -6117,7 +6185,7 @@ mod author_gate_tests {
         cache.cache_sibling(workflow_owner.clone(), true);
 
         let decision = gate
-            .evaluate(
+            .evaluate_for_test(
                 &event,
                 &RespondTo::OwnerOnly,
                 &HashSet::new(),
@@ -6157,7 +6225,7 @@ mod author_gate_tests {
         let (gate, rest_client, server) =
             connected_gate(&relay.public_key().to_hex(), &agent).await;
         let decision = gate
-            .evaluate(
+            .evaluate_for_test(
                 &event,
                 &RespondTo::OwnerOnly,
                 &HashSet::new(),
@@ -6196,7 +6264,7 @@ mod author_gate_tests {
         let (gate, rest_client, server) =
             connected_gate(&relay.public_key().to_hex(), &agent).await;
         let decision = gate
-            .evaluate(
+            .evaluate_for_test(
                 &event,
                 &RespondTo::OwnerOnly,
                 &HashSet::new(),
@@ -6238,7 +6306,7 @@ mod author_gate_tests {
         let (gate, rest_client, server) =
             connected_gate(&relay.public_key().to_hex(), &agent).await;
         let decision = gate
-            .evaluate(
+            .evaluate_for_test(
                 &event,
                 &RespondTo::OwnerOnly,
                 &HashSet::new(),
@@ -6260,7 +6328,7 @@ mod author_gate_tests {
         let cache = cache_with_sibling();
         let allowlist = HashSet::from([EXTERNAL.to_string()]);
         assert!(
-            author_allowed(
+            inbound_author_gate::test_author_allowed(
                 &RespondTo::Allowlist,
                 &allowlist,
                 SIBLING,
@@ -6278,7 +6346,7 @@ mod author_gate_tests {
         let cache = cache_with_sibling();
         let allowlist = HashSet::from([EXTERNAL.to_string()]);
         assert!(
-            author_allowed(
+            inbound_author_gate::test_author_allowed(
                 &RespondTo::Allowlist,
                 &allowlist,
                 EXTERNAL,
@@ -6296,7 +6364,7 @@ mod author_gate_tests {
         let cache = cache_with_sibling();
         let allowlist = HashSet::from([EXTERNAL.to_string()]);
         assert!(
-            !author_allowed(
+            !inbound_author_gate::test_author_allowed(
                 &RespondTo::Allowlist,
                 &allowlist,
                 STRANGER,
@@ -6314,7 +6382,7 @@ mod author_gate_tests {
         let cache = cache_with_sibling();
         let allowlist = HashSet::new();
         assert!(
-            author_allowed(
+            inbound_author_gate::test_author_allowed(
                 &RespondTo::Allowlist,
                 &allowlist,
                 OWNER,
@@ -6335,7 +6403,7 @@ mod author_gate_tests {
     async fn test_owner_only_rejects_stranger_so_no_steer() {
         let cache = cache_with_sibling();
         assert!(
-            !author_allowed(
+            !inbound_author_gate::test_author_allowed(
                 &RespondTo::OwnerOnly,
                 &HashSet::new(),
                 STRANGER,
@@ -6353,7 +6421,7 @@ mod author_gate_tests {
         let cache = cache_with_sibling();
         for (who, label) in [(OWNER, "owner"), (SIBLING, "sibling")] {
             assert!(
-                author_allowed(
+                inbound_author_gate::test_author_allowed(
                     &RespondTo::OwnerOnly,
                     &HashSet::new(),
                     who,
@@ -6379,7 +6447,7 @@ mod author_gate_tests {
         let cache = cache_with_sibling();
         let allowlist = HashSet::from([EXTERNAL.to_string()]);
         assert!(
-            !author_allowed(
+            !inbound_author_gate::test_author_allowed(
                 &RespondTo::Allowlist,
                 &allowlist,
                 EXTERNAL,
@@ -6396,7 +6464,7 @@ mod author_gate_tests {
     async fn test_dm_rejects_stranger_under_anyone() {
         let cache = cache_with_sibling();
         assert!(
-            !author_allowed(
+            !inbound_author_gate::test_author_allowed(
                 &RespondTo::Anyone,
                 &HashSet::new(),
                 STRANGER,
@@ -6419,7 +6487,7 @@ mod author_gate_tests {
         ] {
             for (who, label) in [(OWNER, "owner"), (SIBLING, "sibling")] {
                 assert!(
-                    author_allowed(
+                    inbound_author_gate::test_author_allowed(
                         &mode,
                         &HashSet::new(),
                         who,
@@ -6438,7 +6506,7 @@ mod author_gate_tests {
     async fn test_dm_nobody_rejects_even_owner() {
         let cache = cache_with_sibling();
         assert!(
-            !author_allowed(
+            !inbound_author_gate::test_author_allowed(
                 &RespondTo::Nobody,
                 &HashSet::new(),
                 OWNER,
@@ -6578,7 +6646,7 @@ mod author_gate_tests {
         let is_dm = is_dm_channel(id, &channel_info).await;
         assert!(is_dm, "unknown startup metadata must fail closed as DM");
         assert!(
-            !author_allowed(
+            !inbound_author_gate::test_author_allowed(
                 &RespondTo::Allowlist,
                 &allowlist,
                 EXTERNAL,
