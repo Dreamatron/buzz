@@ -369,112 +369,99 @@ struct InboundAuthorGateDecision {
     allowed: bool,
 }
 
-struct WorkflowAuthorContext<'a> {
-    relay_self: Option<&'a str>,
-    agent_pubkey_hex: &'a str,
-}
-
-async fn evaluate_inbound_author_gate(
-    event: &nostr::Event,
-    workflow_author: WorkflowAuthorContext<'_>,
-    respond_to: &RespondTo,
-    allowlist: &HashSet<String>,
-    is_dm: bool,
-    owner_cache: &OwnerCache,
-    rest_client: &relay::RestClient,
-) -> InboundAuthorGateDecision {
-    let effective_author = effective_prompt_author(
-        event,
-        workflow_author.relay_self,
-        workflow_author.agent_pubkey_hex,
-    );
-    let allowed = author_allowed(
-        respond_to,
-        allowlist,
-        &effective_author,
-        is_dm,
-        owner_cache,
-        rest_client,
-    )
-    .await;
-    InboundAuthorGateDecision {
-        effective_author,
-        allowed,
-    }
-}
-
 /// Owns the verified relay signing identity for a listener's lifetime and
 /// applies the inbound author gate to each event.
 ///
-/// The relay identity is deliberately *not* a per-event parameter. Both
-/// listeners previously threaded a local `Option<String>` into every
-/// `evaluate_inbound_author_gate` call, which meant the delegated-workflow
-/// attribution this type exists to enforce could be silently disabled by
-/// passing `None` at either call site while every unit test still passed.
-/// Loading the identity in [`InboundAuthorGate::connect`] and refreshing it in
-/// [`InboundAuthorGate::refresh`] leaves the per-event path with no relay
-/// identity argument to drop, so wiring regressions become type errors or
-/// failures of the construction-level regression tests rather than silent
-/// availability loss.
-struct InboundAuthorGate {
-    agent_pubkey_hex: String,
-    relay_self: Option<String>,
-}
+/// The relay identity is deliberately *not* a per-event parameter, and this
+/// type deliberately lives in its own module with private fields so the only
+/// way to obtain one is [`InboundAuthorGate::connect`], which loads the
+/// identity.
+///
+/// Two earlier revisions of this code were mutable-with-impunity: the first
+/// threaded a local `Option<String>` into every gate call, and the second kept
+/// a free `evaluate_inbound_author_gate(.., relay_self, ..)` alongside the
+/// method. In both cases a listener could be rewired to pass `None` — silently
+/// disabling every delegated workflow wake — while all 848 tests stayed green.
+/// Encapsulation, not a test, is what closes that seam: `InboundAuthorGate {
+/// relay_self: None, .. }` is now a privacy error outside this module, and
+/// dropping the load inside it fails the construction regressions.
+mod inbound_author_gate {
+    use super::{
+        author_allowed, effective_prompt_author, refresh_relay_self, relay,
+        InboundAuthorGateDecision, OwnerCache, RespondTo,
+    };
+    use std::collections::HashSet;
 
-impl InboundAuthorGate {
-    /// Load the relay signing identity for a freshly connected listener.
-    async fn connect(
-        rest_client: &relay::RestClient,
-        agent_pubkey_hex: &str,
-        context: &str,
-    ) -> Self {
-        Self {
-            agent_pubkey_hex: agent_pubkey_hex.to_string(),
-            relay_self: refresh_relay_self(rest_client, None, context).await,
+    pub(crate) struct InboundAuthorGate {
+        agent_pubkey_hex: String,
+        relay_self: Option<String>,
+    }
+
+    impl InboundAuthorGate {
+        /// Load the relay signing identity for a freshly connected listener.
+        pub(crate) async fn connect(
+            rest_client: &relay::RestClient,
+            agent_pubkey_hex: &str,
+            context: &str,
+        ) -> Self {
+            Self {
+                agent_pubkey_hex: agent_pubkey_hex.to_string(),
+                relay_self: refresh_relay_self(rest_client, None, context).await,
+            }
+        }
+
+        /// Re-read the relay signing identity after a reconnect, retaining the
+        /// last verified key on a transient failure (see
+        /// [`refresh_relay_self`]).
+        pub(crate) async fn refresh(&mut self, rest_client: &relay::RestClient, context: &str) {
+            self.relay_self =
+                refresh_relay_self(rest_client, self.relay_self.take(), context).await;
+        }
+
+        /// Whether delegated workflow attribution is currently available.
+        ///
+        /// Test-only: production code never branches on this.
+        /// `refresh_relay_self` already logs why attribution is unavailable, and
+        /// every runtime path treats a missing identity by falling back to the
+        /// raw signer.
+        #[cfg(test)]
+        pub(crate) fn has_relay_identity(&self) -> bool {
+            self.relay_self.is_some()
+        }
+
+        /// Resolve the effective author for `event` and apply the author policy.
+        ///
+        /// The relay identity is read from `self`, never from a parameter, so no
+        /// caller can evaluate an event with attribution disabled.
+        pub(crate) async fn evaluate(
+            &self,
+            event: &nostr::Event,
+            respond_to: &RespondTo,
+            allowlist: &HashSet<String>,
+            is_dm: bool,
+            owner_cache: &OwnerCache,
+            rest_client: &relay::RestClient,
+        ) -> InboundAuthorGateDecision {
+            let effective_author =
+                effective_prompt_author(event, self.relay_self.as_deref(), &self.agent_pubkey_hex);
+            let allowed = author_allowed(
+                respond_to,
+                allowlist,
+                &effective_author,
+                is_dm,
+                owner_cache,
+                rest_client,
+            )
+            .await;
+            InboundAuthorGateDecision {
+                effective_author,
+                allowed,
+            }
         }
     }
-
-    /// Re-read the relay signing identity after a reconnect, retaining the last
-    /// verified key on a transient failure (see [`refresh_relay_self`]).
-    async fn refresh(&mut self, rest_client: &relay::RestClient, context: &str) {
-        self.relay_self = refresh_relay_self(rest_client, self.relay_self.take(), context).await;
-    }
-
-    /// Whether delegated workflow attribution is currently available.
-    ///
-    /// Test-only: production code never branches on this. `refresh_relay_self`
-    /// already logs why attribution is unavailable, and every runtime path
-    /// treats a missing identity by falling back to the raw signer.
-    #[cfg(test)]
-    fn has_relay_identity(&self) -> bool {
-        self.relay_self.is_some()
-    }
-
-    /// Resolve the effective author for `event` and apply the author policy.
-    async fn evaluate(
-        &self,
-        event: &nostr::Event,
-        respond_to: &RespondTo,
-        allowlist: &HashSet<String>,
-        is_dm: bool,
-        owner_cache: &OwnerCache,
-        rest_client: &relay::RestClient,
-    ) -> InboundAuthorGateDecision {
-        evaluate_inbound_author_gate(
-            event,
-            WorkflowAuthorContext {
-                relay_self: self.relay_self.as_deref(),
-                agent_pubkey_hex: &self.agent_pubkey_hex,
-            },
-            respond_to,
-            allowlist,
-            is_dm,
-            owner_cache,
-            rest_client,
-        )
-        .await
-    }
 }
+
+use inbound_author_gate::InboundAuthorGate;
 
 /// Refresh the relay signing identity, logging why delegated workflow
 /// attribution is unavailable. A transient fetch error keeps the last verified
@@ -5972,6 +5959,23 @@ mod author_gate_tests {
         (rest, server)
     }
 
+    /// Build a gate through the real `connect` path against a NIP-11 document
+    /// advertising `relay_hex` as the relay signer. Tests use this instead of
+    /// constructing `InboundAuthorGate` literally so that the identity load
+    /// stays part of what they cover.
+    async fn connected_gate(
+        relay_hex: &str,
+        agent: &str,
+    ) -> (
+        InboundAuthorGate,
+        relay::RestClient,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let (rest_client, server) = nip11_server(serde_json::json!({ "self": relay_hex })).await;
+        let gate = InboundAuthorGate::connect(&rest_client, agent, "test").await;
+        (gate, rest_client, server)
+    }
+
     /// A genuine relay-signed workflow dispatch that explicitly targets `agent`
     /// on behalf of `owner` — the exact event shape a scheduled workflow emits.
     fn relay_signed_workflow_dispatch(
@@ -6150,24 +6154,24 @@ mod author_gate_tests {
         let cache = cache_with_sibling();
         cache.cache_sibling(workflow_owner.clone(), true);
 
-        let decision = evaluate_inbound_author_gate(
-            &event,
-            WorkflowAuthorContext {
-                relay_self: Some(&relay.public_key().to_hex()),
-                agent_pubkey_hex: &agent,
-            },
-            &RespondTo::OwnerOnly,
-            &HashSet::new(),
-            false,
-            &cache,
-            &dummy_rest_client(),
-        )
-        .await;
+        let (gate, rest_client, server) =
+            connected_gate(&relay.public_key().to_hex(), &agent).await;
+        let decision = gate
+            .evaluate(
+                &event,
+                &RespondTo::OwnerOnly,
+                &HashSet::new(),
+                false,
+                &cache,
+                &rest_client,
+            )
+            .await;
         assert_eq!(decision.effective_author, workflow_owner);
         assert!(
             decision.allowed,
             "a verified workflow owner for an explicitly targeted agent must flow through the existing sibling policy"
         );
+        server.abort();
     }
 
     #[tokio::test]
@@ -6189,19 +6193,19 @@ mod author_gate_tests {
         cache.cache_sibling(workflow_owner, true);
         cache.cache_sibling(relay.public_key().to_hex(), false);
 
-        let decision = evaluate_inbound_author_gate(
-            &event,
-            WorkflowAuthorContext {
-                relay_self: Some(&relay.public_key().to_hex()),
-                agent_pubkey_hex: &agent,
-            },
-            &RespondTo::OwnerOnly,
-            &HashSet::new(),
-            false,
-            &cache,
-            &dummy_rest_client(),
-        )
-        .await;
+        let (gate, rest_client, server) =
+            connected_gate(&relay.public_key().to_hex(), &agent).await;
+        let decision = gate
+            .evaluate(
+                &event,
+                &RespondTo::OwnerOnly,
+                &HashSet::new(),
+                false,
+                &cache,
+                &rest_client,
+            )
+            .await;
+        server.abort();
         assert_eq!(decision.effective_author, relay.public_key().to_hex());
         assert!(
             !decision.allowed,
@@ -6231,19 +6235,19 @@ mod author_gate_tests {
         cache.cache_sibling(workflow_owner, true);
         cache.cache_sibling(attacker.public_key().to_hex(), false);
 
-        let decision = evaluate_inbound_author_gate(
-            &event,
-            WorkflowAuthorContext {
-                relay_self: Some(&relay.public_key().to_hex()),
-                agent_pubkey_hex: &agent,
-            },
-            &RespondTo::OwnerOnly,
-            &HashSet::new(),
-            false,
-            &cache,
-            &dummy_rest_client(),
-        )
-        .await;
+        let (gate, rest_client, server) =
+            connected_gate(&relay.public_key().to_hex(), &agent).await;
+        let decision = gate
+            .evaluate(
+                &event,
+                &RespondTo::OwnerOnly,
+                &HashSet::new(),
+                false,
+                &cache,
+                &rest_client,
+            )
+            .await;
+        server.abort();
         assert_eq!(decision.effective_author, attacker.public_key().to_hex());
         assert!(
             !decision.allowed,
