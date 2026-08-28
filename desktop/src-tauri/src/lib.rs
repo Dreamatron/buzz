@@ -384,6 +384,11 @@ pub fn run() {
             if let Err(error) = ensure_nest() {
                 eprintln!("buzz-desktop: failed to create nest: {error}");
             }
+            if let Err(error) =
+                project_canvas_package::start_agent_update_listener(app_handle.clone())
+            {
+                eprintln!("buzz-desktop: failed to start project Canvas updates: {error}");
+            }
             archive::spawn_warm_init(app_handle.clone());
 
             // Resolve the REPOS symlink from the persisted repos_dir BEFORE
@@ -645,6 +650,7 @@ pub fn run() {
             get_canvas,
             set_canvas,
             project_canvas_package::get_project_canvas_package,
+            project_canvas_package::get_project_canvas_updates,
             project_canvas_package::activate_project_canvas_package,
             project_canvas_package::commit_project_canvas_package,
             project_canvas_package::release_project_canvas_package,

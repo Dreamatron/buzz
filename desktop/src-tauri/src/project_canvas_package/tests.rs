@@ -9,7 +9,8 @@ use super::{
         active_snapshot, commit_snapshot, prepare_snapshot, prune_revisions, record_source_binding,
         ProjectBinding,
     },
-    ProjectCanvasPackageRequest, ProjectCanvasRuntime,
+    ProjectCanvasAgentUpdateRequest, ProjectCanvasPackageRequest, ProjectCanvasRuntime,
+    ProjectCanvasUpdateChange,
 };
 
 const OWNER: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -56,7 +57,18 @@ fn write_package(root: &Path, marker: &str) {
     fs::write(root.join("styles/canvas.css"), "body { margin: 0; }").unwrap();
     fs::write(
         root.join("data/dashboards.json"),
-        serde_json::to_vec(&serde_json::json!({ "marker": marker })).unwrap(),
+        serde_json::to_vec(&serde_json::json!({
+            "marker": marker,
+            "dashboards": {
+                "test": {
+                    "widgets": [{
+                        "id": "chore-board",
+                        "data": { "marker": marker }
+                    }]
+                }
+            }
+        }))
+        .unwrap(),
     )
     .unwrap();
     fs::write(root.join("assets/pixel.png"), [137, 80, 78, 71]).unwrap();
@@ -121,6 +133,76 @@ fn candidate_revision_is_not_active_until_render_commit() {
             .unwrap()
             .revision,
         candidate.revision
+    );
+}
+
+#[test]
+fn agent_updates_are_durable_delineated_and_commit_only_matching_state() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().join("CANVASES");
+    let binding = ProjectBinding::parse(request()).unwrap();
+    let source = source_root(&temp, &binding);
+    write_package(&source, "active");
+    let active = prepare_snapshot(&root, &binding, None).unwrap();
+    commit_snapshot(&root, &binding, &active.revision).unwrap();
+    let runtime = ProjectCanvasRuntime::with_root(root.clone());
+
+    write_package(&source, "data-one");
+    runtime
+        .accept_agent_update(ProjectCanvasAgentUpdateRequest {
+            change: ProjectCanvasUpdateChange::Data,
+            community_id: request().community_id,
+            format: "buzz-project-canvas-update".to_string(),
+            notification_id: "11111111111141118111111111111111".to_string(),
+            project_id: request().project_id,
+            version: 1,
+            widget_id: "chore-board".to_string(),
+        })
+        .unwrap();
+    let first_updates = runtime.updates(request()).unwrap();
+    assert!(first_updates.presentation.is_none());
+    assert_eq!(first_updates.data.unwrap().data["marker"], "data-one");
+    assert_eq!(
+        active_snapshot(&root, &binding).unwrap().unwrap().data["marker"],
+        "active"
+    );
+
+    write_package(&source, "presentation");
+    runtime
+        .accept_agent_update(ProjectCanvasAgentUpdateRequest {
+            change: ProjectCanvasUpdateChange::Presentation,
+            community_id: request().community_id,
+            format: "buzz-project-canvas-update".to_string(),
+            notification_id: "22222222222242228222222222222222".to_string(),
+            project_id: request().project_id,
+            version: 1,
+            widget_id: "chore-board".to_string(),
+        })
+        .unwrap();
+    let presentation_updates = runtime.updates(request()).unwrap();
+    assert!(presentation_updates.data.is_none());
+    let presentation = presentation_updates.presentation.unwrap().package;
+
+    write_package(&source, "data-newer");
+    runtime
+        .accept_agent_update(ProjectCanvasAgentUpdateRequest {
+            change: ProjectCanvasUpdateChange::Data,
+            community_id: request().community_id,
+            format: "buzz-project-canvas-update".to_string(),
+            notification_id: "33333333333343338333333333333333".to_string(),
+            project_id: request().project_id,
+            version: 1,
+            widget_id: "chore-board".to_string(),
+        })
+        .unwrap();
+
+    runtime.commit(&presentation.load_id).unwrap();
+    let remaining = runtime.updates(request()).unwrap();
+    assert!(remaining.presentation.is_none());
+    assert_eq!(remaining.data.unwrap().data["marker"], "data-newer");
+    assert_eq!(
+        active_snapshot(&root, &binding).unwrap().unwrap().data["marker"],
+        "presentation"
     );
 }
 

@@ -1245,6 +1245,9 @@ declare global {
       event: string,
       payload: unknown,
     ) => Promise<void>;
+    __BUZZ_E2E_SET_PROJECT_CANVAS_UPDATE__?: (
+      change: "data" | "presentation" | null,
+    ) => void;
     __BUZZ_E2E_SET_MOCK_HUDDLE_SNAPSHOT__?: (input: {
       members: MockHuddleMemberSeed[];
       transcriptionEnabled: boolean;
@@ -4045,6 +4048,19 @@ function getConfig(): E2eConfig | undefined {
 }
 
 const mockProjectCanvasCandidateLoads = new Set<string>();
+let mockProjectCanvasPendingUpdates: {
+  data: {
+    data: unknown;
+    notificationId: string;
+    revision: string;
+    widgetId: string;
+  } | null;
+  presentation: {
+    notificationId: string;
+    package: ReturnType<typeof mockProjectCanvasPackageDescriptor>;
+    widgetId: string;
+  } | null;
+} = { data: null, presentation: null };
 
 function mockProjectCanvasPackageDescriptor(candidate = false) {
   const loadId = crypto.randomUUID().replaceAll("-", "");
@@ -4094,6 +4110,10 @@ function mockProjectCanvasPackageDescriptor(candidate = false) {
         root.dataset.canvasMode = data.mode;
       } else if (data.type === "host.dataChanged") {
         root.dataset.canvasDataChanged = "true";
+      } else if (data.type === "host.widgetDataChanged") {
+        root.dataset.canvasWidgetDataChanged = "true";
+        root.dataset.canvasWidgetId = data.widgetId;
+        root.dataset.canvasWidgetVersion = String(data.data?.version ?? "");
       }
     };
     port.start();
@@ -14021,6 +14041,8 @@ export function maybeInstallE2eTauriMocks() {
       }
       case "get_project_canvas_package":
         return mockProjectCanvasPackageDescriptor();
+      case "get_project_canvas_updates":
+        return mockProjectCanvasPendingUpdates;
       case "activate_project_canvas_package": {
         const delayMs = activeConfig?.mock?.projectCanvasActivationDelayMs ?? 0;
         if (delayMs > 0) {
@@ -14043,6 +14065,16 @@ export function maybeInstallE2eTauriMocks() {
           mockProjectCanvasCandidateLoads.delete(loadId)
         ) {
           throw new Error(commitError);
+        }
+        if (
+          loadId &&
+          mockProjectCanvasPendingUpdates.presentation?.package.loadId ===
+            loadId
+        ) {
+          mockProjectCanvasPendingUpdates = {
+            ...mockProjectCanvasPendingUpdates,
+            presentation: null,
+          };
         }
         return null;
       }
@@ -14412,6 +14444,32 @@ export function maybeInstallE2eTauriMocks() {
     handleMockCommand(command, payload ?? null);
   window.__BUZZ_E2E_EMIT_TAURI_EVENT__ = (event, payload) =>
     emit(event, payload);
+  window.__BUZZ_E2E_SET_PROJECT_CANVAS_UPDATE__ = (change) => {
+    if (!change) {
+      mockProjectCanvasPendingUpdates = { data: null, presentation: null };
+      return;
+    }
+    if (change === "data") {
+      mockProjectCanvasPendingUpdates = {
+        data: {
+          data: { dashboard: "e2e", version: 2 },
+          notificationId: "11111111111141118111111111111111",
+          revision: "a".repeat(64),
+          widgetId: "e2e-widget",
+        },
+        presentation: null,
+      };
+      return;
+    }
+    mockProjectCanvasPendingUpdates = {
+      data: null,
+      presentation: {
+        notificationId: "22222222222242228222222222222222",
+        package: mockProjectCanvasPackageDescriptor(true),
+        widgetId: "e2e-widget",
+      },
+    };
+  };
   mockIPC(handleMockCommand, { shouldMockEvents: true });
   const tauriInternals = (
     window as typeof window & {

@@ -1,4 +1,5 @@
 import { invokeTauri } from "@/shared/api/tauri";
+import { listen } from "@tauri-apps/api/event";
 import { cn } from "@/shared/lib/cn";
 import { Button } from "@/shared/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
@@ -16,13 +17,16 @@ import {
   parseProjectCanvasChildMessage,
   parseProjectCanvasPackageDescriptor,
   parseProjectCanvasPackageDescriptorForE2e,
+  parseProjectCanvasPendingUpdates,
   parseProjectCanvasReady,
+  parseProjectCanvasSourceUpdateEvent,
   PROJECT_CANVAS_HANDSHAKE_TIMEOUT_MS,
   PROJECT_CANVAS_MAX_INIT_MESSAGE_BYTES,
   PROJECT_CANVAS_PROTOCOL_VERSION,
   ProjectCanvasMessageRateLimiter,
   selectGrantedProjectCanvasSnapshots,
   type ProjectCanvasPackageDescriptor,
+  type ProjectCanvasPendingUpdates,
   type ProjectCanvasSnapshots,
 } from "./projectCanvasProtocol";
 
@@ -43,6 +47,7 @@ type PackageRequest = {
 };
 
 const MAX_INVALID_PORT_MESSAGES = 3;
+const PROJECT_CANVAS_SOURCE_UPDATE_EVENT = "project-canvas-source-updated";
 const parsePackageDescriptor =
   import.meta.env.MODE === "e2e"
     ? parseProjectCanvasPackageDescriptorForE2e
@@ -64,6 +69,15 @@ async function commitProjectCanvasPackage(loadId: string): Promise<void> {
   await invokeTauri("commit_project_canvas_package", { loadId });
 }
 
+async function requestProjectCanvasUpdates(
+  request: PackageRequest,
+): Promise<ProjectCanvasPendingUpdates> {
+  const response = await invokeTauri<unknown>("get_project_canvas_updates", {
+    request,
+  });
+  return parseProjectCanvasPendingUpdates(response);
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Canvas package failed.";
 }
@@ -80,9 +94,13 @@ export function ProjectCanvasHost({
     React.useState<ProjectCanvasPackageDescriptor | null>(null);
   const [loadError, setLoadError] = React.useState<string | null>(null);
   const [reloading, setReloading] = React.useState(false);
+  const [dataUpdate, setDataUpdate] =
+    React.useState<ProjectCanvasPendingUpdates["data"]>(null);
   const requestGenerationRef = React.useRef(0);
   const candidateLoadIdRef = React.useRef<string | null>(null);
   const restoredLoadIdRef = React.useRef<string | null>(null);
+  const lastDataNotificationRef = React.useRef<string | null>(null);
+  const lastPresentationNotificationRef = React.useRef<string | null>(null);
   const bindingKey = `${communityId ?? ""}\u0000${projectId}`;
   const bindingKeyRef = React.useRef(bindingKey);
   bindingKeyRef.current = bindingKey;
@@ -103,6 +121,9 @@ export function ProjectCanvasHost({
     setDescriptor(null);
     setLoadError(null);
     setReloading(false);
+    setDataUpdate(null);
+    lastDataNotificationRef.current = null;
+    lastPresentationNotificationRef.current = null;
 
     if (!communityId) {
       setLoadError("Canvas is unavailable until the community is ready.");
@@ -140,6 +161,91 @@ export function ProjectCanvasHost({
 
     return () => {
       disposed = true;
+    };
+  }, [bindingKey, communityId, projectId]);
+
+  React.useEffect(() => {
+    if (!communityId) return;
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+    let queued = Promise.resolve();
+    const requestedBinding = bindingKey;
+
+    const sync = async () => {
+      let updates: ProjectCanvasPendingUpdates;
+      try {
+        updates = await requestProjectCanvasUpdates({ communityId, projectId });
+      } catch (error) {
+        if (!disposed && bindingKeyRef.current === requestedBinding) {
+          setLoadError(errorMessage(error));
+        }
+        return;
+      }
+      if (disposed || bindingKeyRef.current !== requestedBinding) {
+        if (updates.presentation) {
+          await releaseProjectCanvasPackage(
+            updates.presentation.package.loadId,
+          ).catch(() => {});
+        }
+        return;
+      }
+
+      if (updates.presentation) {
+        if (
+          updates.presentation.notificationId ===
+          lastPresentationNotificationRef.current
+        ) {
+          await releaseProjectCanvasPackage(
+            updates.presentation.package.loadId,
+          ).catch(() => {});
+        } else {
+          lastPresentationNotificationRef.current =
+            updates.presentation.notificationId;
+          requestGenerationRef.current += 1;
+          candidateLoadIdRef.current = updates.presentation.package.loadId;
+          setReloading(true);
+          setLoadError(null);
+          setDescriptor(updates.presentation.package);
+        }
+      }
+      if (
+        updates.data &&
+        updates.data.notificationId !== lastDataNotificationRef.current
+      ) {
+        lastDataNotificationRef.current = updates.data.notificationId;
+        setDataUpdate(updates.data);
+      }
+    };
+    const scheduleSync = () => {
+      queued = queued.then(sync, sync);
+    };
+
+    void listen<unknown>(PROJECT_CANVAS_SOURCE_UPDATE_EVENT, (event) => {
+      const binding = parseProjectCanvasSourceUpdateEvent(event.payload);
+      if (
+        binding?.communityId === communityId &&
+        binding.projectId === projectId
+      ) {
+        scheduleSync();
+      }
+    })
+      .then((stop) => {
+        if (disposed) {
+          stop();
+          return;
+        }
+        unlisten = stop;
+        scheduleSync();
+      })
+      .catch((error: unknown) => {
+        if (!disposed && bindingKeyRef.current === requestedBinding) {
+          setLoadError(errorMessage(error));
+        }
+      });
+
+    return () => {
+      disposed = true;
+      unlisten?.();
     };
   }, [bindingKey, communityId, projectId]);
 
@@ -249,6 +355,7 @@ export function ProjectCanvasHost({
       candidateLoadIdRef.current = null;
     }
     setLoadError(null);
+    setReloading(false);
   }, []);
 
   const openSource = React.useCallback(async () => {
@@ -272,6 +379,7 @@ export function ProjectCanvasHost({
       {descriptor ? (
         <ProjectCanvasFrame
           descriptor={descriptor}
+          dataUpdate={dataUpdate}
           key={descriptor.loadId}
           mode={full ? "full" : "preview"}
           onFailure={handleFrameFailure}
@@ -392,6 +500,7 @@ function CanvasFailure({
 }
 
 function ProjectCanvasFrame({
+  dataUpdate,
   descriptor,
   mode,
   onFailure,
@@ -401,6 +510,7 @@ function ProjectCanvasFrame({
   projectNames,
   snapshots,
 }: {
+  dataUpdate: ProjectCanvasPendingUpdates["data"];
   descriptor: ProjectCanvasPackageDescriptor;
   mode: ProjectCanvasMode;
   onFailure: (loadId: string, message: string) => void;
@@ -419,6 +529,7 @@ function ProjectCanvasFrame({
   const connectedRef = React.useRef(false);
   const loadCountRef = React.useRef(0);
   const lastSnapshotsJsonRef = React.useRef<string | null>(null);
+  const lastWidgetDataNotificationRef = React.useRef<string | null>(null);
   const [connected, setConnected] = React.useState(false);
   const [rendered, setRendered] = React.useState(false);
   const [failed, setFailed] = React.useState(false);
@@ -635,6 +746,35 @@ function ProjectCanvasFrame({
     port.postMessage(message);
     lastSnapshotsJsonRef.current = serialized;
   }, [connected, descriptor, fail, snapshots]);
+
+  React.useEffect(() => {
+    const port = portRef.current;
+    if (
+      !connected ||
+      !port ||
+      !dataUpdate ||
+      dataUpdate.notificationId === lastWidgetDataNotificationRef.current
+    ) {
+      return;
+    }
+    const message = {
+      data: dataUpdate.data,
+      loadId: descriptor.loadId,
+      nonce: descriptor.nonce,
+      notificationId: dataUpdate.notificationId,
+      protocolVersion: PROJECT_CANVAS_PROTOCOL_VERSION,
+      type: "host.widgetDataChanged",
+      widgetId: dataUpdate.widgetId,
+    } as const;
+    if (
+      !isMessageWithinSizeLimit(message, PROJECT_CANVAS_MAX_INIT_MESSAGE_BYTES)
+    ) {
+      fail("Canvas widget data update exceeds the host size limit.");
+      return;
+    }
+    port.postMessage(message);
+    lastWidgetDataNotificationRef.current = dataUpdate.notificationId;
+  }, [connected, dataUpdate, descriptor.loadId, descriptor.nonce, fail]);
 
   return (
     <div className="relative h-full min-h-0 w-full bg-background">

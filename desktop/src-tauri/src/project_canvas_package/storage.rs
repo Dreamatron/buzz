@@ -25,12 +25,15 @@ use super::{
 const RUNTIME_ROOT_DIR: &str = ".runtime";
 const REVISIONS_DIR: &str = "revisions";
 const ACTIVE_FILE: &str = "active.json";
+const UPDATES_FILE: &str = "updates.json";
 const INDEX_FILE: &str = "index.json";
 const INDEX_FORMAT: &str = "buzz-project-canvas-index";
 const INDEX_VERSION: u32 = 1;
 const MAX_INDEX_BYTES: usize = 1024 * 1024;
 const MAX_INDEX_ENTRIES: usize = 4_096;
 const RECENT_REVISION_RETENTION: usize = 2;
+const UPDATE_STATE_VERSION: u32 = 1;
+const MAX_UPDATE_STATE_BYTES: usize = 16 * 1024;
 
 #[derive(Clone)]
 pub(super) struct ProjectBinding {
@@ -139,6 +142,32 @@ struct ActiveRevision {
     revision: String,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct PendingCanvasUpdate {
+    pub(super) notification_id: String,
+    pub(super) revision: String,
+    pub(super) widget_id: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct PendingCanvasUpdates {
+    version: u32,
+    pub(super) presentation: Option<PendingCanvasUpdate>,
+    pub(super) data: Option<PendingCanvasUpdate>,
+}
+
+impl Default for PendingCanvasUpdates {
+    fn default() -> Self {
+        Self {
+            version: UPDATE_STATE_VERSION,
+            presentation: None,
+            data: None,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct CanvasIndex {
@@ -206,6 +235,30 @@ pub(super) fn active_snapshot(
     }))
 }
 
+pub(super) fn snapshot_for_revision(
+    canvas_root: &Path,
+    binding: &ProjectBinding,
+    revision: &str,
+) -> Result<ValidatedSnapshot, String> {
+    validate_revision(revision)?;
+    let canvas_root = canonical_canvas_root(canvas_root, false)?
+        .ok_or_else(|| "project canvas root does not exist".to_string())?;
+    let runtime_root = binding.runtime_root(&canvas_root);
+    ensure_secure_descendant(&canvas_root, &runtime_root, false)?;
+    let revision_root = runtime_root.join(REVISIONS_DIR).join(revision);
+    ensure_secure_descendant(&canvas_root, &revision_root, false)?;
+    let package = scan_package(&canvas_root, &revision_root)?;
+    if package.revision != revision {
+        return Err("project canvas update snapshot failed its content hash".to_string());
+    }
+    Ok(ValidatedSnapshot {
+        files: Arc::new(package.files),
+        revision: package.revision,
+        manifest: package.manifest,
+        data: package.data,
+    })
+}
+
 pub(super) fn prepare_snapshot(
     canvas_root: &Path,
     binding: &ProjectBinding,
@@ -268,6 +321,86 @@ pub(super) fn commit_snapshot(
     write_active_revision(&runtime_root.join(ACTIVE_FILE), revision)
 }
 
+pub(super) fn record_pending_update(
+    canvas_root: &Path,
+    binding: &ProjectBinding,
+    change: super::ProjectCanvasUpdateChange,
+    notification_id: &str,
+    widget_id: &str,
+    revision: &str,
+) -> Result<(), String> {
+    validate_notification_id(notification_id)?;
+    validate_widget_id(widget_id)?;
+    validate_revision(revision)?;
+    let canvas_root = canonical_canvas_root(canvas_root, false)?
+        .ok_or_else(|| "project canvas root does not exist".to_string())?;
+    let runtime_root = binding.runtime_root(&canvas_root);
+    ensure_secure_descendant(&canvas_root, &runtime_root, false)?;
+    let revision_root = runtime_root.join(REVISIONS_DIR).join(revision);
+    ensure_secure_descendant(&canvas_root, &revision_root, false)?;
+
+    let mut updates = read_pending_updates_from_root(&canvas_root, &runtime_root)?;
+    let update = Some(PendingCanvasUpdate {
+        notification_id: notification_id.to_string(),
+        revision: revision.to_string(),
+        widget_id: widget_id.to_string(),
+    });
+    match change {
+        super::ProjectCanvasUpdateChange::Presentation => {
+            updates.presentation = update;
+            updates.data = None;
+        }
+        super::ProjectCanvasUpdateChange::Data => updates.data = update,
+    }
+    write_pending_updates(&canvas_root, &runtime_root, &updates)
+}
+
+pub(super) fn pending_updates(
+    canvas_root: &Path,
+    binding: &ProjectBinding,
+) -> Result<PendingCanvasUpdates, String> {
+    let Some(canvas_root) = canonical_canvas_root(canvas_root, false)? else {
+        return Ok(PendingCanvasUpdates::default());
+    };
+    let runtime_root = binding.runtime_root(&canvas_root);
+    if !runtime_root.exists() {
+        return Ok(PendingCanvasUpdates::default());
+    }
+    ensure_secure_descendant(&canvas_root, &runtime_root, false)?;
+    read_pending_updates_from_root(&canvas_root, &runtime_root)
+}
+
+pub(super) fn clear_committed_updates(
+    canvas_root: &Path,
+    binding: &ProjectBinding,
+    revision: &str,
+) -> Result<(), String> {
+    let Some(canvas_root) = canonical_canvas_root(canvas_root, false)? else {
+        return Ok(());
+    };
+    let runtime_root = binding.runtime_root(&canvas_root);
+    if !runtime_root.exists() {
+        return Ok(());
+    }
+    ensure_secure_descendant(&canvas_root, &runtime_root, false)?;
+    let mut updates = read_pending_updates_from_root(&canvas_root, &runtime_root)?;
+    if updates
+        .presentation
+        .as_ref()
+        .is_some_and(|update| update.revision == revision)
+    {
+        updates.presentation = None;
+    }
+    if let Some(update) = &updates.data {
+        let committed = snapshot_for_revision(&canvas_root, binding, revision)?;
+        let pending = snapshot_for_revision(&canvas_root, binding, &update.revision)?;
+        if update.revision == revision || pending.data == committed.data {
+            updates.data = None;
+        }
+    }
+    write_pending_updates(&canvas_root, &runtime_root, &updates)
+}
+
 pub(super) fn prune_revisions(
     canvas_root: &Path,
     binding: &ProjectBinding,
@@ -293,6 +426,13 @@ pub(super) fn prune_revisions(
     ensure_secure_descendant(&canvas_root, &revisions_root, false)?;
 
     let mut keep = retained.clone();
+    let updates = read_pending_updates_from_root(&canvas_root, &runtime_root)?;
+    keep.extend(
+        [updates.presentation, updates.data]
+            .into_iter()
+            .flatten()
+            .map(|update| update.revision),
+    );
     let active_path = runtime_root.join(ACTIVE_FILE);
     if active_path.exists() {
         ensure_secure_file(&canvas_root, &active_path)?;
@@ -609,6 +749,73 @@ fn write_active_revision(path: &Path, revision: &str) -> Result<(), String> {
         .map_err(|error| format!("write project canvas active revision: {error}"))?;
     file.commit()
         .map_err(|error| format!("commit project canvas active revision: {error}"))
+}
+
+fn read_pending_updates_from_root(
+    canvas_root: &Path,
+    runtime_root: &Path,
+) -> Result<PendingCanvasUpdates, String> {
+    let path = runtime_root.join(UPDATES_FILE);
+    if !path.exists() {
+        return Ok(PendingCanvasUpdates::default());
+    }
+    ensure_secure_file(canvas_root, &path)?;
+    let raw = read_file_with_cap(canvas_root, &path, MAX_UPDATE_STATE_BYTES)?;
+    let updates: PendingCanvasUpdates = serde_json::from_slice(&raw)
+        .map_err(|error| format!("invalid project canvas update state: {error}"))?;
+    if updates.version != UPDATE_STATE_VERSION {
+        return Err("unsupported project canvas update state version".to_string());
+    }
+    for update in [&updates.presentation, &updates.data].into_iter().flatten() {
+        validate_notification_id(&update.notification_id)?;
+        validate_widget_id(&update.widget_id)?;
+        validate_revision(&update.revision)?;
+        let revision_root = runtime_root.join(REVISIONS_DIR).join(&update.revision);
+        ensure_secure_descendant(canvas_root, &revision_root, false)?;
+    }
+    Ok(updates)
+}
+
+fn write_pending_updates(
+    canvas_root: &Path,
+    runtime_root: &Path,
+    updates: &PendingCanvasUpdates,
+) -> Result<(), String> {
+    let path = runtime_root.join(UPDATES_FILE);
+    if path.exists() {
+        ensure_secure_file(canvas_root, &path)?;
+    }
+    let bytes = serde_json::to_vec(updates)
+        .map_err(|error| format!("encode project canvas update state: {error}"))?;
+    let mut file = AtomicWriteFile::open(&path)
+        .map_err(|error| format!("open project canvas update state: {error}"))?;
+    file.write_all(&bytes)
+        .map_err(|error| format!("write project canvas update state: {error}"))?;
+    file.commit()
+        .map_err(|error| format!("commit project canvas update state: {error}"))
+}
+
+fn validate_notification_id(value: &str) -> Result<(), String> {
+    let parsed = uuid::Uuid::parse_str(value)
+        .map_err(|_| "invalid project canvas update notification id".to_string())?;
+    if parsed.simple().to_string() != value {
+        return Err("invalid project canvas update notification id".to_string());
+    }
+    Ok(())
+}
+
+pub(super) fn validate_widget_id(value: &str) -> Result<(), String> {
+    if value.is_empty()
+        || value.len() > 128
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+    {
+        return Err(
+            "widget id must be 1 to 128 ASCII letters, numbers, '.', '-', or '_'".to_string(),
+        );
+    }
+    Ok(())
 }
 
 fn hash_files(files: &BTreeMap<String, Vec<u8>>) -> String {

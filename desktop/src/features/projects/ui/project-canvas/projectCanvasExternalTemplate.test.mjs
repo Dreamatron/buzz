@@ -430,3 +430,54 @@ test("mode updates change package layout state without drawing a second fold mar
     0,
   );
 });
+
+test("targeted data updates preserve the widget root and receive previous and next state", async () => {
+  const harness = await createCanvasHarness();
+  const { document } = harness.dom.window;
+  harness.port.emit(
+    initMessage(harness.fixtureData, {
+      project: { id: "project-1", name: "my-home" },
+    }),
+  );
+  const board = document.querySelector(
+    "[data-testid='project-canvas-chore-board']",
+  );
+  const unrelated = document.querySelector(
+    "[data-testid='project-canvas-home-clock']",
+  );
+  assert.ok(board);
+  assert.ok(unrelated);
+
+  const nextData = structuredClone(harness.fixtureData);
+  const choreWidget = nextData.dashboards.home.widgets.find(
+    (widget) => widget.id === "chores",
+  );
+  choreWidget.data.groups[1].completed = ["Take bins to the curb"];
+  harness.port.emit({
+    data: nextData,
+    loadId: "load-1",
+    nonce: "nonce-1",
+    notificationId: "11111111111141118111111111111111",
+    protocolVersion: 1,
+    type: "host.widgetDataChanged",
+    widgetId: "chores",
+  });
+
+  assert.equal(
+    document.querySelector("[data-testid='project-canvas-chore-board']"),
+    board,
+  );
+  assert.equal(
+    document.querySelector("[data-testid='project-canvas-home-clock']"),
+    unrelated,
+  );
+  assert.equal(board.dataset.previousCompleted, "1");
+  assert.equal(board.dataset.completed, "2");
+  assert.equal(board.classList.contains("widget-data-updated"), true);
+  assert.equal(
+    document.querySelector(
+      "[data-testid='project-canvas-chore-jon-take-bins-to-the-curb']",
+    )?.checked,
+    true,
+  );
+});

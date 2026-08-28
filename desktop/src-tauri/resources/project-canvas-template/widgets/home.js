@@ -6,7 +6,10 @@
       homeSchedule: renderHomeScheduleCompanion,
     },
     renderers: {
-      choreBoard: renderChoreBoard,
+      choreBoard: {
+        render: renderChoreBoard,
+        update: updateChoreBoard,
+      },
       familyLocations: renderFamilyLocations,
       frontYardCamera: renderFrontYardCamera,
       homeSchedule: renderHomeSchedule,
@@ -52,6 +55,29 @@
       board.append(section);
     }
     return board;
+  }
+
+  function updateChoreBoard(board, data, previousData, api) {
+    const replacement = renderChoreBoard(data, api);
+    board.replaceChildren(...replacement.childNodes);
+    board.dataset.previousCompleted = String(completedCount(previousData));
+    board.dataset.completed = String(completedCount(data));
+    board.classList.remove("widget-data-updated");
+    void board.offsetWidth;
+    board.classList.add("widget-data-updated");
+    board.addEventListener(
+      "animationend",
+      () => board.classList.remove("widget-data-updated"),
+      { once: true },
+    );
+    return board;
+  }
+
+  function completedCount(data) {
+    return (data?.groups || []).reduce(
+      (total, group) => total + (group.completed || []).length,
+      0,
+    );
   }
 
   function renderHomeSchedule(data, { element, resolveAsset }) {

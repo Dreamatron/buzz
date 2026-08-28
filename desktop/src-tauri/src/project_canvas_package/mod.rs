@@ -1,3 +1,4 @@
+mod ipc;
 mod manifest;
 mod path_security;
 mod protocol;
@@ -18,8 +19,9 @@ use tauri_plugin_opener::OpenerExt;
 
 use manifest::ValidatedManifest;
 use storage::{
-    active_snapshot, commit_snapshot, prepare_snapshot, project_source_location, prune_revisions,
-    record_source_binding, ProjectBinding, ProjectCanvasSourceLocation,
+    active_snapshot, clear_committed_updates, commit_snapshot, pending_updates, prepare_snapshot,
+    project_source_location, prune_revisions, record_pending_update, record_source_binding,
+    snapshot_for_revision, validate_widget_id, ProjectBinding, ProjectCanvasSourceLocation,
 };
 
 const MAX_ACTIVE_LOADS: usize = 64;
@@ -116,8 +118,84 @@ impl ProjectCanvasRuntime {
             .map_err(|_| "project canvas activation lock is unavailable".to_string())?;
         let root = self.root()?;
         commit_snapshot(&root, &load.binding, &load.revision)?;
+        clear_committed_updates(&root, &load.binding, &load.revision)?;
         let retained = self.referenced_revisions(&load.binding)?;
         prune_revisions(&root, &load.binding, &retained)
+    }
+
+    fn accept_agent_update(
+        &self,
+        request: ProjectCanvasAgentUpdateRequest,
+    ) -> Result<ProjectCanvasUpdateAccepted, String> {
+        request.validate()?;
+        let binding = ProjectBinding::parse(ProjectCanvasPackageRequest {
+            community_id: request.community_id.clone(),
+            project_id: request.project_id.clone(),
+        })?;
+        ensure_supported_platform()?;
+        let _guard = self
+            .activation_lock
+            .lock()
+            .map_err(|_| "project canvas activation lock is unavailable".to_string())?;
+        let root = self.root()?;
+        let snapshot = prepare_snapshot(&root, &binding, None)?;
+        validate_widget_in_data(&snapshot.data, &request.widget_id)?;
+        record_pending_update(
+            &root,
+            &binding,
+            request.change,
+            &request.notification_id,
+            &request.widget_id,
+            &snapshot.revision,
+        )?;
+        let retained = self.referenced_revisions(&binding)?;
+        prune_revisions(&root, &binding, &retained)?;
+        Ok(ProjectCanvasUpdateAccepted {
+            change: request.change,
+            community_id: request.community_id,
+            notification_id: request.notification_id,
+            project_id: request.project_id,
+            revision: snapshot.revision,
+            widget_id: request.widget_id,
+        })
+    }
+
+    fn updates(
+        &self,
+        request: ProjectCanvasPackageRequest,
+    ) -> Result<ProjectCanvasPendingUpdates, String> {
+        let binding = ProjectBinding::parse(request)?;
+        ensure_supported_platform()?;
+        let _guard = self
+            .activation_lock
+            .lock()
+            .map_err(|_| "project canvas activation lock is unavailable".to_string())?;
+        let root = self.root()?;
+        let updates = pending_updates(&root, &binding)?;
+        let presentation = match updates.presentation {
+            Some(update) => {
+                let snapshot = snapshot_for_revision(&root, &binding, &update.revision)?;
+                Some(ProjectCanvasPendingPresentation {
+                    notification_id: update.notification_id,
+                    package: self.issue_load(binding.clone(), snapshot)?,
+                    widget_id: update.widget_id,
+                })
+            }
+            None => None,
+        };
+        let data = match updates.data {
+            Some(update) => {
+                let snapshot = snapshot_for_revision(&root, &binding, &update.revision)?;
+                Some(ProjectCanvasPendingData {
+                    data: snapshot.data,
+                    notification_id: update.notification_id,
+                    revision: update.revision,
+                    widget_id: update.widget_id,
+                })
+            }
+            None => None,
+        };
+        Ok(ProjectCanvasPendingUpdates { data, presentation })
     }
 
     fn source_location(
@@ -246,6 +324,74 @@ pub(crate) struct ProjectCanvasPackageDescriptor {
     data: serde_json::Value,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum ProjectCanvasUpdateChange {
+    Presentation,
+    Data,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ProjectCanvasAgentUpdateRequest {
+    format: String,
+    version: u32,
+    notification_id: String,
+    community_id: String,
+    project_id: String,
+    widget_id: String,
+    change: ProjectCanvasUpdateChange,
+}
+
+impl ProjectCanvasAgentUpdateRequest {
+    fn validate(&self) -> Result<(), String> {
+        if self.format != ipc::UPDATE_FORMAT || self.version != ipc::UPDATE_VERSION {
+            return Err("unsupported project canvas update request".to_string());
+        }
+        let parsed = uuid::Uuid::parse_str(&self.notification_id)
+            .map_err(|_| "invalid project canvas update notification id".to_string())?;
+        if parsed.simple().to_string() != self.notification_id {
+            return Err("invalid project canvas update notification id".to_string());
+        }
+        validate_widget_id(&self.widget_id)
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectCanvasUpdateAccepted {
+    change: ProjectCanvasUpdateChange,
+    community_id: String,
+    notification_id: String,
+    project_id: String,
+    revision: String,
+    widget_id: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ProjectCanvasPendingUpdates {
+    data: Option<ProjectCanvasPendingData>,
+    presentation: Option<ProjectCanvasPendingPresentation>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectCanvasPendingData {
+    data: serde_json::Value,
+    notification_id: String,
+    revision: String,
+    widget_id: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectCanvasPendingPresentation {
+    notification_id: String,
+    package: ProjectCanvasPackageDescriptor,
+    widget_id: String,
+}
+
 #[tauri::command]
 pub(crate) async fn get_project_canvas_package(
     request: ProjectCanvasPackageRequest,
@@ -255,6 +401,15 @@ pub(crate) async fn get_project_canvas_package(
     let template = template_path(&app)?;
     let runtime = runtime.inner().clone();
     run_blocking(move || runtime.get_or_activate(request, &template)).await
+}
+
+#[tauri::command]
+pub(crate) async fn get_project_canvas_updates(
+    request: ProjectCanvasPackageRequest,
+    runtime: State<'_, ProjectCanvasRuntime>,
+) -> Result<ProjectCanvasPendingUpdates, String> {
+    let runtime = runtime.inner().clone();
+    run_blocking(move || runtime.updates(request)).await
 }
 
 #[tauri::command]
@@ -315,6 +470,10 @@ pub(crate) fn handle_request(
     protocol::handle(&runtime, request)
 }
 
+pub(crate) fn start_agent_update_listener(app: AppHandle) -> Result<(), String> {
+    ipc::start(app)
+}
+
 fn template_path(app: &AppHandle) -> Result<PathBuf, String> {
     app.path()
         .resource_dir()
@@ -348,6 +507,29 @@ fn ensure_supported_platform() -> Result<(), String> {
         );
     }
     Ok(())
+}
+
+fn validate_widget_in_data(data: &serde_json::Value, widget_id: &str) -> Result<(), String> {
+    let dashboards = data
+        .get("dashboards")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| "project canvas data must contain a dashboards object".to_string())?;
+    let matches = dashboards
+        .values()
+        .filter_map(|dashboard| dashboard.get("widgets"))
+        .filter_map(serde_json::Value::as_array)
+        .flatten()
+        .filter(|widget| widget.get("id").and_then(serde_json::Value::as_str) == Some(widget_id))
+        .count();
+    match matches {
+        1 => Ok(()),
+        0 => Err(format!(
+            "widget id '{widget_id}' does not exist in the Canvas data"
+        )),
+        _ => Err(format!(
+            "widget id '{widget_id}' must be unique across Canvas dashboards"
+        )),
+    }
 }
 
 pub(crate) fn allow_webview_navigation(url: &tauri::Url) -> bool {

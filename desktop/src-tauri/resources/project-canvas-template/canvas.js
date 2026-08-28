@@ -52,6 +52,9 @@
       state.snapshots = message.snapshots || {};
       renderSnapshotWidgets();
     }
+    if (message.type === "host.widgetDataChanged" && matchesSession(message)) {
+      applyWidgetDataUpdate(message.widgetId, message.data);
+    }
   }
 
   function matchesSession(message) {
@@ -230,12 +233,58 @@
     const renderer = widgetRenderers[widget.type];
     const content = element("div", "widget-content");
     if (renderer)
-      content.append(renderer(resolveWidgetData(widget), widgetApi));
+      content.append(renderWith(renderer, resolveWidgetData(widget)));
     else
       content.append(
         element("p", "empty-state", { text: "Widget unavailable" }),
       );
     return content;
+  }
+
+  function renderWith(renderer, data) {
+    if (typeof renderer === "function") return renderer(data, widgetApi);
+    if (renderer && typeof renderer.render === "function") {
+      return renderer.render(data, widgetApi);
+    }
+    return element("p", "empty-state", { text: "Widget unavailable" });
+  }
+
+  function applyWidgetDataUpdate(widgetId, data) {
+    const nextDashboard = selectDashboard(data, state.project);
+    const currentWidget = state.dashboard.widgets.find(
+      (widget) => widget.id === widgetId,
+    );
+    const nextWidget = nextDashboard.widgets.find(
+      (widget) => widget.id === widgetId,
+    );
+    if (!currentWidget || !nextWidget) return;
+    const group = [...root.querySelectorAll("[data-widget-id]")].find(
+      (candidate) => candidate.dataset.widgetId === widgetId,
+    );
+    const content = group?.querySelector(".widget-content");
+    if (!content) return;
+
+    const previousData = resolveWidgetData(currentWidget);
+    state.data = data;
+    currentWidget.data = nextWidget.data;
+    const nextData = resolveWidgetData(currentWidget);
+    const renderer = widgetRenderers[currentWidget.type];
+    if (
+      renderer &&
+      typeof renderer === "object" &&
+      typeof renderer.update === "function"
+    ) {
+      const current = content.firstElementChild;
+      const updated = renderer.update(
+        current,
+        nextData,
+        previousData,
+        widgetApi,
+      );
+      if (updated && updated !== current) content.replaceChildren(updated);
+      return;
+    }
+    content.replaceChildren(renderWith(renderer, nextData));
   }
 
   function resolveWidgetData(widget) {

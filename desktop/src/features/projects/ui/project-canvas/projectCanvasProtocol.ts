@@ -5,6 +5,7 @@ export const PROJECT_CANVAS_HANDSHAKE_TIMEOUT_MS = 8_000;
 export const PROJECT_CANVAS_MAX_READY_BYTES = 4 * 1_024;
 export const PROJECT_CANVAS_MAX_PORT_MESSAGE_BYTES = 64 * 1_024;
 export const PROJECT_CANVAS_MAX_PACKAGE_DESCRIPTOR_BYTES = 320 * 1_024;
+export const PROJECT_CANVAS_MAX_PENDING_UPDATES_BYTES = 640 * 1_024;
 export const PROJECT_CANVAS_MAX_INIT_MESSAGE_BYTES = 2 * 1_024 * 1_024;
 export const PROJECT_CANVAS_MESSAGE_RATE_LIMIT = 60;
 export const PROJECT_CANVAS_MESSAGE_RATE_WINDOW_MS = 10_000;
@@ -91,6 +92,37 @@ export type ProjectCanvasPackageDescriptor = z.infer<
   typeof packageDescriptorSchema
 >;
 
+const pendingUpdatesSchema = z
+  .object({
+    data: z
+      .object({
+        data: z.unknown(),
+        notificationId: z.string().regex(/^[0-9a-f]{32}$/),
+        revision: z.string().min(1).max(MAX_IDENTIFIER_LENGTH),
+        widgetId: z.string().regex(/^[A-Za-z0-9._-]{1,128}$/),
+      })
+      .strict()
+      .nullable(),
+    presentation: z
+      .object({
+        notificationId: z.string().regex(/^[0-9a-f]{32}$/),
+        package: packageDescriptorSchema,
+        widgetId: z.string().regex(/^[A-Za-z0-9._-]{1,128}$/),
+      })
+      .strict()
+      .nullable(),
+  })
+  .strict();
+
+export type ProjectCanvasPendingUpdates = z.infer<typeof pendingUpdatesSchema>;
+
+const sourceUpdateEventSchema = z
+  .object({
+    communityId: z.string().min(1).max(128),
+    projectId: z.string().min(1).max(MAX_IDENTIFIER_LENGTH),
+  })
+  .strict();
+
 const readyMessageSchema = z
   .object({
     nonce: z.string().min(16).max(MAX_NONCE_LENGTH),
@@ -175,6 +207,35 @@ export function parseProjectCanvasPackageDescriptor(
   value: unknown,
 ): ProjectCanvasPackageDescriptor {
   return parsePackageDescriptor(value, false);
+}
+
+export function parseProjectCanvasPendingUpdates(
+  value: unknown,
+): ProjectCanvasPendingUpdates {
+  if (
+    !isMessageWithinSizeLimit(value, PROJECT_CANVAS_MAX_PENDING_UPDATES_BYTES)
+  ) {
+    throw new Error("Canvas pending updates exceed the host size limit.");
+  }
+  const parsed = pendingUpdatesSchema.parse(value);
+  if (parsed.data && !isBoundedJsonValue(parsed.data.data)) {
+    throw new Error("Canvas pending widget data is not bounded JSON.");
+  }
+  if (parsed.presentation) {
+    parsePackageDescriptor(
+      parsed.presentation.package,
+      import.meta.env.MODE === "e2e",
+    );
+  }
+  return parsed;
+}
+
+export function parseProjectCanvasSourceUpdateEvent(value: unknown): {
+  communityId: string;
+  projectId: string;
+} | null {
+  const parsed = sourceUpdateEventSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
 }
 
 /** Test bridge variant. Production callers must use the custom-protocol parser. */

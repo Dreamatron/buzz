@@ -164,6 +164,55 @@ test("Reload activates a new package revision and releases the old handle", asyn
     .toBeGreaterThanOrEqual(1);
 });
 
+test("agent notifications update data in place and reload presentation", async ({
+  page,
+}) => {
+  await installMockBridge(page);
+  await page.goto("/");
+  await openStarterProject(page);
+  const { iframe, root } = await expectCanvasReady(page);
+  const initialSource = await iframe.getAttribute("src");
+  const request = await page.evaluate(() => {
+    const entry = (window.__BUZZ_E2E_COMMAND_PAYLOADS__ ?? []).find(
+      (candidate) => candidate.command === "get_project_canvas_package",
+    );
+    return (entry?.payload as { request?: unknown } | undefined)?.request;
+  });
+  expect(request).toBeTruthy();
+
+  await page.evaluate(async (binding) => {
+    window.__BUZZ_E2E_SET_PROJECT_CANVAS_UPDATE__?.("data");
+    await window.__BUZZ_E2E_EMIT_TAURI_EVENT__?.(
+      "project-canvas-source-updated",
+      binding,
+    );
+  }, request);
+  await expect(root).toHaveAttribute("data-canvas-widget-data-changed", "true");
+  await expect(root).toHaveAttribute("data-canvas-widget-id", "e2e-widget");
+  await expect(root).toHaveAttribute("data-canvas-widget-version", "2");
+  await expect(iframe).toHaveAttribute("src", initialSource ?? "");
+
+  await page.evaluate(async (binding) => {
+    window.__BUZZ_E2E_SET_PROJECT_CANVAS_UPDATE__?.("presentation");
+    await window.__BUZZ_E2E_EMIT_TAURI_EVENT__?.(
+      "project-canvas-source-updated",
+      binding,
+    );
+  }, request);
+  await expect.poll(() => iframe.getAttribute("src")).not.toBe(initialSource);
+  await expectCanvasReady(page);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window.__BUZZ_E2E_COMMANDS__ ?? []).filter(
+            (command) => command === "get_project_canvas_updates",
+          ).length,
+      ),
+    )
+    .toBeGreaterThanOrEqual(3);
+});
+
 test("a failed candidate commit restores the active Canvas", async ({
   page,
 }) => {
