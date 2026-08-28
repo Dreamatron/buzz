@@ -536,6 +536,155 @@ test("relay-only shared agents emit an outbound mention tag when selected", asyn
     .toContain(TEST_IDENTITIES.alice.pubkey);
 });
 
+test("typing an exact agent name and Space commits its chip and mention tag", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.getByTestId("channel-general").click();
+  await expect(page.getByTestId("chat-title")).toHaveText("general");
+
+  const input = page.getByTestId("message-input");
+  await input.fill("@alice");
+  await expect(
+    autocomplete(page).getByTestId(
+      `mention-suggestion-${TEST_IDENTITIES.alice.pubkey}`,
+    ),
+  ).toBeVisible();
+
+  await input.fill("Ask @alice");
+  await input.press(" ");
+  await page.keyboard.type("please reply");
+
+  const content = "Ask @alice please reply";
+  await expect(input).toHaveText(content);
+  await expect(
+    input.locator(".agent-mention-highlight", { hasText: "alice" }),
+  ).toBeVisible();
+
+  await page.getByTestId("send-message").click();
+  await expect
+    .poll(() => readOutgoingMentionPubkeys(page, content))
+    .toContain(TEST_IDENTITIES.alice.pubkey);
+});
+
+test("Shift+Space leaves an exact agent name plain and emits no mention tag", async ({
+  page,
+}) => {
+  await installMockBridge(page, {
+    managedAgents: [
+      {
+        pubkey: OUT_OF_CHANNEL_MANAGED_AGENT_PUBKEY,
+        name: "quinn",
+        status: "stopped",
+      },
+    ],
+  });
+  await page.goto("/");
+  await page.getByTestId("channel-general").click();
+  await expect(page.getByTestId("chat-title")).toHaveText("general");
+
+  // Plain in-channel member names are intentionally tagged at send time, so
+  // use an authorized non-member to isolate selection from text extraction.
+  const input = page.getByTestId("message-input");
+  await input.fill("@quinn");
+  await expect(
+    autocomplete(page).getByTestId(
+      `mention-suggestion-${OUT_OF_CHANNEL_MANAGED_AGENT_PUBKEY}`,
+    ),
+  ).toBeVisible();
+
+  await input.fill("Ask @quinn");
+  await input.press("Shift+Space");
+  await page.keyboard.type("please reply");
+
+  const content = "Ask @quinn please reply";
+  await expect(input).toHaveText(content);
+  await expect(input.locator(".agent-mention-highlight")).toHaveCount(0);
+
+  await page.getByTestId("send-message").click();
+  await expect
+    .poll(() => readOutgoingMentionPubkeys(page, content))
+    .toEqual([]);
+});
+
+// The three tests below pin the code-context gate on the Space commit. They
+// key off casing, because a commit rewrites the draft to the candidate's
+// canonical display name: a surviving "@ALICE" means the typed text was left
+// alone. Chip decorations are deliberately not asserted — they already render
+// over known names inside code, which is a separate pre-existing gap.
+test("Space inside a code block leaves an exact agent name literal", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.getByTestId("channel-general").click();
+  await expect(page.getByTestId("chat-title")).toHaveText("general");
+
+  const input = page.getByTestId("message-input");
+  await input.click();
+  await page.keyboard.type("```");
+  await page.keyboard.press("Enter");
+  await expect(input.locator("pre")).toBeVisible();
+
+  await page.keyboard.type("deploy @ALICE");
+  await page.keyboard.press(" ");
+  await page.keyboard.type("now");
+
+  await expect(input.locator("pre")).toHaveText("deploy @ALICE now");
+
+  await page.getByTestId("send-message").click();
+  await expect
+    .poll(() => readOutgoingMentionPubkeys(page, "```\ndeploy @ALICE now\n```"))
+    .toEqual([]);
+});
+
+test("Space inside an inline code span leaves an exact agent name literal", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.getByTestId("channel-general").click();
+  await expect(page.getByTestId("chat-title")).toHaveText("general");
+
+  const input = page.getByTestId("message-input");
+  await input.click();
+  // The closing backtick turns the span into a code mark, which drops the
+  // backticks from the text the mention pipeline reads.
+  await page.keyboard.type("run `@ALICE`");
+  await expect(input.locator("code")).toHaveText("@ALICE");
+
+  await page.keyboard.press(" ");
+  await page.keyboard.type("now");
+
+  await expect(input.locator("code")).toHaveText("@ALICE");
+  await expect(input).toHaveText("run @ALICE now");
+
+  await page.getByTestId("send-message").click();
+  await expect
+    .poll(() => readOutgoingMentionPubkeys(page, "run `@ALICE` now"))
+    .toEqual([]);
+});
+
+test("Space still resolves an exact agent name typed after a code span", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.getByTestId("channel-general").click();
+  await expect(page.getByTestId("chat-title")).toHaveText("general");
+
+  const input = page.getByTestId("message-input");
+  await input.click();
+  await page.keyboard.type("run `deploy` @ALICE");
+  await page.keyboard.press(" ");
+  await page.keyboard.type("now");
+
+  const content = "run `deploy` @alice now";
+  await expect(input).toHaveText("run deploy @alice now");
+
+  await page.getByTestId("send-message").click();
+  await expect
+    .poll(() => readOutgoingMentionPubkeys(page, content))
+    .toContain(TEST_IDENTITIES.alice.pubkey);
+});
+
 test("thread autocomplete keeps multiple long names readable in a narrow panel", async ({
   page,
 }) => {
@@ -1154,7 +1303,6 @@ test("selecting a persona mention creates a channel agent before sending", async
     baselineCommands,
     "start_managed_agent",
   );
-
   await page.getByTestId("send-message").click();
   await expect(page.getByRole("alertdialog")).toHaveCount(0);
 
@@ -2161,11 +2309,21 @@ test("mentioning a non-member managed agent adds and starts it before sending", 
   page,
 }) => {
   await installMockBridge(page, {
+    personas: [
+      {
+        id: "persona-owner",
+        displayName: "Fizz",
+        systemPrompt: "",
+      },
+    ],
     managedAgents: [
       {
         pubkey: OUT_OF_CHANNEL_MANAGED_AGENT_PUBKEY,
         name: "fizz",
+        personaId: "persona-owner",
         status: "stopped",
+        respondTo: "anyone",
+        respondToAllowlist: [TEST_IDENTITIES.outsider.pubkey],
       },
     ],
   });
@@ -2191,6 +2349,7 @@ test("mentioning a non-member managed agent adds and starts it before sending", 
     baselineCommands,
     "start_managed_agent",
   );
+  const baselinePayloadCount = (await readCommandPayloadLog(page)).length;
 
   await page.getByTestId("send-message").click();
   await expect(page.getByRole("alertdialog")).toHaveCount(0);
@@ -2206,11 +2365,55 @@ test("mentioning a non-member managed agent adds and starts it before sending", 
     )
     .toBeGreaterThan(baselineStartCount);
 
+  const sendCommands = (await readCommandPayloadLog(page)).slice(
+    baselinePayloadCount,
+  );
+  const updateIndex = sendCommands.findIndex(
+    (entry) => entry.command === "update_managed_agent",
+  );
+  const addIndex = sendCommands.findIndex(
+    (entry) => entry.command === "add_channel_members",
+  );
+  const startIndex = sendCommands.findIndex(
+    (entry) => entry.command === "start_managed_agent",
+  );
+  expect(updateIndex).toBeGreaterThanOrEqual(0);
+  expect(updateIndex).toBeLessThan(addIndex);
+  expect(updateIndex).toBeLessThan(startIndex);
+  expect(sendCommands[updateIndex]?.payload).toMatchObject({
+    input: {
+      pubkey: OUT_OF_CHANNEL_MANAGED_AGENT_PUBKEY,
+      respondTo: "owner-only",
+      respondToAllowlist: [],
+    },
+  });
+
   const mentionChip = page
     .getByTestId("message-row")
     .last()
     .locator("[data-mention].agent-mention-highlight", { hasText: "fizz" });
   await expect(mentionChip).toBeVisible();
+
+  const persistedPolicy = await page.evaluate(async (pubkey) => {
+    const invoke = window.__BUZZ_E2E_INVOKE_MOCK_COMMAND__;
+    if (!invoke) throw new Error("Mock bridge is not installed.");
+    const agents = (await invoke("list_managed_agents", {})) as Array<{
+      pubkey: string;
+      respond_to: string;
+      respond_to_allowlist: string[];
+    }>;
+    const agent = agents.find((candidate) => candidate.pubkey === pubkey);
+    return agent
+      ? {
+          respondTo: agent.respond_to,
+          respondToAllowlist: agent.respond_to_allowlist,
+        }
+      : null;
+  }, OUT_OF_CHANNEL_MANAGED_AGENT_PUBKEY);
+  expect(persistedPolicy).toEqual({
+    respondTo: "owner-only",
+    respondToAllowlist: [],
+  });
 });
 
 test("mentioning a non-member provider managed agent deploys it before sending", async ({

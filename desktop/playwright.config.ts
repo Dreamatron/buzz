@@ -20,6 +20,7 @@ export default defineConfig({
       name: "smoke",
       testMatch: [
         "**/smoke.spec.ts",
+        "**/thread-head-stale-edit.spec.ts",
         "**/sidebar-offcanvas-rail.spec.ts",
         "**/tooltip-semantics.spec.ts",
         "**/search-scope-screenshots.spec.ts",
@@ -29,6 +30,7 @@ export default defineConfig({
         "**/navigation.spec.ts",
         "**/channels.spec.ts",
         "**/channel-shared-header-backdrop.spec.ts",
+        "**/auxiliary-pane-close-visibility.spec.ts",
         "**/channel-composer-overflow.spec.ts",
         "**/badge.spec.ts",
         "**/channel-browser.spec.ts",
@@ -117,6 +119,7 @@ export default defineConfig({
         "**/inbox-reactions.spec.ts",
         "**/inbox-edit.spec.ts",
         "**/send-channel-binding.spec.ts",
+        "**/project-cold-start.spec.ts",
         "**/project-commit-detail.spec.ts",
         "**/project-inbox.spec.ts",
         "**/projects-v3-screenshots.spec.ts",
