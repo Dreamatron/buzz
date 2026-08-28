@@ -225,9 +225,22 @@ pub(crate) fn run_boot_reset_with_keychain(ctx: ResetContext<'_>) -> ResetOutcom
     if let Some(ref nest) = ctx.nest_dir {
         let _ = std::fs::remove_dir_all(nest);
     }
-    if let Some(ref demo_config_dir) = ctx.demo_config_dir {
-        let _ = std::fs::remove_dir_all(demo_config_dir);
-    }
+    // A demo owns credentials here. Failure to remove them must keep the reset
+    // pending, even if the app data and keychain were successfully wiped.
+    let demo_config_removed =
+        ctx.demo_config_dir
+            .as_ref()
+            .is_none_or(|path| match std::fs::remove_dir_all(path) {
+                Ok(()) => true,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+                Err(error) => {
+                    eprintln!(
+                        "buzz-desktop reset: remove demo config {}: {error}",
+                        path.display()
+                    );
+                    false
+                }
+            });
     if let Some(ref home) = ctx.home_dir {
         if !ctx.is_demo {
             let _ = std::fs::remove_dir_all(home.join(".sprout"));
@@ -288,6 +301,11 @@ pub(crate) fn run_boot_reset_with_keychain(ctx: ResetContext<'_>) -> ResetOutcom
         .map(|p| !p.exists())
         .unwrap_or(true);
     let nest_gone = ctx.nest_dir.as_ref().map(|n| !n.exists()).unwrap_or(true);
+    // `exists()` treats metadata errors as absence. Only NotFound establishes
+    // that credentials are gone; a dangling symlink is not an absent root.
+    let demo_config_gone = ctx.demo_config_dir.as_ref().is_none_or(|path| {
+        matches!(std::fs::symlink_metadata(path), Err(error) if error.kind() == std::io::ErrorKind::NotFound)
+    });
     let trash_app_gone = !trash_app.exists();
     let trash_legacy_gone = trash_legacy.as_ref().map(|p| !p.exists()).unwrap_or(true);
     let trash_webkit_gone = trash_webkit.as_ref().map(|p| !p.exists()).unwrap_or(true);
@@ -296,6 +314,8 @@ pub(crate) fn run_boot_reset_with_keychain(ctx: ResetContext<'_>) -> ResetOutcom
         || !app_data_gone
         || !legacy_gone
         || !nest_gone
+        || !demo_config_removed
+        || !demo_config_gone
         || !trash_app_gone
         || !trash_legacy_gone
         || !trash_webkit_gone
@@ -303,6 +323,7 @@ pub(crate) fn run_boot_reset_with_keychain(ctx: ResetContext<'_>) -> ResetOutcom
         eprintln!(
             "buzz-desktop reset: verification failed (keychain_wiped={keychain_ok}, \
              app_data_gone={app_data_gone}, legacy_gone={legacy_gone}, nest_gone={nest_gone}, \
+             demo_config_removed={demo_config_removed}, demo_config_gone={demo_config_gone}, \
              trash_app_gone={trash_app_gone}, trash_legacy_gone={trash_legacy_gone}, \
              trash_webkit_gone={trash_webkit_gone})"
         );
@@ -332,6 +353,10 @@ mod tests {
     use super::*;
     use std::cell::Cell;
     use tempfile::TempDir;
+
+    mod demo {
+        include!("reset_demo_tests.rs");
+    }
 
     // ── Fake keychain ─────────────────────────────────────────────────────────
 
@@ -833,78 +858,6 @@ mod tests {
     }
 
     // ── Test 13: keychain-fail restores all dirs, retry cleans trash ──────
-
-    #[test]
-    fn test_demo_reset_preserves_shared_and_other_build_state() {
-        let tmp = TempDir::new().unwrap();
-        let home = tmp.path().join("home");
-        let app_data = tmp
-            .path()
-            .join("Application Support")
-            .join("xyz.block.buzz.app.demo.current-1234567812345678");
-        let demo_nest = home.join(".buzz-demo-current-1234567812345678");
-        let prod_nest = home.join(".buzz");
-        let other_demo_nest = home.join(".buzz-demo-other-8765432187654321");
-        let shared_sprout = home.join(".sprout");
-        let shared_agent = home.join(".config").join("buzz-agent");
-        let demo_config = home
-            .join("Library")
-            .join("Application Support")
-            .join("buzz-demo-current-1234567812345678");
-        let demo_oauth = demo_config.join("buzz-agent").join("oauth");
-        let other_demo_config = home
-            .join("Library")
-            .join("Application Support")
-            .join("buzz-demo-other-8765432187654321");
-        let other_demo_oauth = other_demo_config.join("buzz-agent").join("oauth");
-
-        for path in [
-            &app_data,
-            &demo_nest,
-            &prod_nest,
-            &other_demo_nest,
-            &shared_sprout,
-            &shared_agent,
-            &demo_oauth,
-            &other_demo_oauth,
-        ] {
-            std::fs::create_dir_all(path).unwrap();
-        }
-        write_sentinel(&app_data).unwrap();
-
-        let kc = FakeKeychain::ok();
-        let ctx = ResetContext {
-            app_data_dir: &app_data,
-            legacy_app_data_dir: None,
-            nest_dir: Some(demo_nest.clone()),
-            keychain: &kc,
-            home_dir: Some(home),
-            is_dev: false,
-            demo_config_dir: Some(demo_config.clone()),
-            is_demo: true,
-        };
-
-        let outcome = run_boot_reset_with_keychain(ctx);
-
-        assert!(outcome.completed, "demo reset must complete");
-        assert!(!app_data.exists(), "demo app data must be wiped");
-        assert!(!demo_nest.exists(), "selected demo nest must be wiped");
-        assert!(
-            !demo_config.exists(),
-            "selected demo auth root must be wiped"
-        );
-        assert!(
-            other_demo_oauth.exists(),
-            "another demo's concrete auth root must survive"
-        );
-        assert!(prod_nest.exists(), "production nest must survive");
-        assert!(other_demo_nest.exists(), "another demo nest must survive");
-        assert!(shared_sprout.exists(), "shared legacy state must survive");
-        assert!(
-            shared_agent.exists(),
-            "shared agent auth state must survive"
-        );
-    }
 
     #[test]
     fn test_keychain_fail_restores_all_then_retry_cleans() {
