@@ -418,16 +418,23 @@ mod inbound_author_gate {
         ) -> Self {
             Self {
                 agent_pubkey_hex: agent_pubkey_hex.to_string(),
-                relay_self: refresh_relay_self(rest_client, None, context).await,
+                relay_self: refresh_relay_self(rest_client, None, context).await.0,
             }
         }
 
         /// Re-read the relay signing identity after a reconnect, retaining the
         /// last verified key on a transient failure (see
-        /// [`refresh_relay_self`]).
-        pub(crate) async fn refresh(&mut self, rest_client: &relay::RestClient, context: &str) {
-            self.relay_self =
+        /// [`refresh_relay_self`]). Returns whether NIP-11 produced an
+        /// authoritative document, including one without a `self` key.
+        pub(crate) async fn refresh(
+            &mut self,
+            rest_client: &relay::RestClient,
+            context: &str,
+        ) -> bool {
+            let (relay_self, completed) =
                 refresh_relay_self(rest_client, self.relay_self.take(), context).await;
+            self.relay_self = relay_self;
+            completed
         }
 
         /// Whether delegated workflow attribution is currently available.
@@ -534,8 +541,9 @@ async fn refresh_author_gate_for_generation(
         return;
     }
 
-    author_gate.refresh(rest_client, context).await;
-    *refreshed_generation = event_generation;
+    if author_gate.refresh(rest_client, context).await {
+        *refreshed_generation = event_generation;
+    }
 }
 
 use inbound_author_gate::InboundAuthorGate;
@@ -551,15 +559,15 @@ async fn refresh_relay_self(
     rest_client: &relay::RestClient,
     current: Option<String>,
     context: &str,
-) -> Option<String> {
+) -> (Option<String>, bool) {
     match rest_client.relay_self().await {
-        Ok(Some(pubkey)) => Some(pubkey),
+        Ok(Some(pubkey)) => (Some(pubkey), true),
         Ok(None) => {
             tracing::warn!(
                 %context,
                 "relay NIP-11 document has no `self` key — workflow attribution remains fail-closed"
             );
-            None
+            (None, true)
         }
         Err(error) => {
             tracing::warn!(
@@ -568,7 +576,7 @@ async fn refresh_relay_self(
                 retaining_previous_identity = current.is_some(),
                 "failed to refresh relay NIP-11 identity"
             );
-            current
+            (current, false)
         }
     }
 }
@@ -5716,10 +5724,10 @@ mod workflow_owner_tests {
             auth_tag_json: None,
         };
 
-        assert_eq!(
-            refresh_relay_self(&client, Some(previous.clone()), "test").await,
-            Some(previous)
-        );
+        let (refreshed, completed) =
+            refresh_relay_self(&client, Some(previous.clone()), "test").await;
+        assert_eq!(refreshed, Some(previous));
+        assert!(!completed);
     }
 
     #[test]
@@ -6273,7 +6281,7 @@ mod author_gate_tests {
     }
 
     #[tokio::test]
-    async fn test_first_event_after_reconnect_refreshes_rotated_relay_identity() {
+    async fn test_generation_refresh_retries_after_nip11_failure() {
         let old_relay = nostr::Keys::generate();
         let new_relay = nostr::Keys::generate();
         let old_relay_hex = old_relay.public_key().to_hex();
@@ -6306,29 +6314,6 @@ mod author_gate_tests {
         let mut refreshed_generation = 1;
 
         assert_eq!(gate.relay_identity_for_test(), Some(old_relay_hex.as_str()));
-        gate.refresh(&rest_client, "outage").await;
-        assert_eq!(gate.relay_identity_for_test(), Some(old_relay_hex.as_str()));
-        let retained_old_event = relay::BuzzEvent {
-            connection_generation: 0,
-            channel_id,
-            event: relay_signed_workflow_dispatch(&old_relay, &workflow_owner, &agent),
-        };
-        let retained = gate
-            .evaluate_listener_event(
-                &retained_old_event,
-                &RespondTo::OwnerOnly,
-                &HashSet::new(),
-                &owner_cache,
-                &channel_info,
-                &rest_client,
-            )
-            .await;
-        assert!(
-            retained.allowed,
-            "a failed refresh must retain the last verified relay key; effective author={} raw={}",
-            retained.effective_author,
-            retained_old_event.event.pubkey.to_hex()
-        );
 
         let new_event = relay::BuzzEvent {
             connection_generation: 2,
@@ -6343,6 +6328,35 @@ mod author_gate_tests {
             "reconnect",
         )
         .await;
+        assert_eq!(
+            refreshed_generation, 1,
+            "a failed NIP-11 refresh must leave the generation pending"
+        );
+        assert_eq!(gate.relay_identity_for_test(), Some(old_relay_hex.as_str()));
+        let first_new = gate
+            .evaluate_listener_event(
+                &new_event,
+                &RespondTo::OwnerOnly,
+                &HashSet::new(),
+                &owner_cache,
+                &channel_info,
+                &rest_client,
+            )
+            .await;
+        assert!(
+            !first_new.allowed,
+            "the new signer must remain fail-closed while NIP-11 is unavailable"
+        );
+
+        refresh_author_gate_for_generation(
+            &mut gate,
+            &rest_client,
+            &mut refreshed_generation,
+            new_event.connection_generation,
+            "reconnect retry",
+        )
+        .await;
+        assert_eq!(refreshed_generation, 2);
         assert_eq!(gate.relay_identity_for_test(), Some(new_relay_hex.as_str()));
 
         let stale_old_event = relay::BuzzEvent {
