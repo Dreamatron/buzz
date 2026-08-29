@@ -11,6 +11,7 @@ import {
   OnboardingSlideTransition,
 } from "@/features/onboarding/ui/OnboardingSlideTransition";
 import { useIdentityQuery } from "@/shared/api/hooks";
+import { builderlabHostedCommunitiesEnabled } from "@/shared/buildConfig";
 import { writeTextToClipboard } from "@/shared/lib/clipboard";
 import { pubkeyToNpub } from "@/shared/lib/nostrUtils";
 import { useSystemColorScheme } from "@/shared/theme/useSystemColorScheme";
@@ -22,6 +23,7 @@ type WelcomeSetupPage = "welcome" | "existing" | "join" | "member" | "owned";
 type WelcomeTransitionMode = "initial" | OnboardingTransitionDirection;
 
 type WelcomeSetupProps = {
+  defaultRelayUrl?: string;
   initialPage?: WelcomeSetupPage;
   initialTransitionMode?: WelcomeTransitionMode;
   onBack?: () => void;
@@ -31,6 +33,7 @@ const COMMUNITY_OPTION_CARD_CLASS =
   "w-full max-w-[320px] items-center px-6 py-4 text-center text-sm font-normal leading-6 text-foreground [--buzz-card-textured-min-height:88px] transition-[filter] duration-150 ease-out hover:brightness-[0.98] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-foreground/35";
 
 export function WelcomeSetup({
+  defaultRelayUrl,
   initialPage = "welcome",
   initialTransitionMode = "initial",
   onBack,
@@ -89,10 +92,13 @@ export function WelcomeSetup({
     [communityOnboarding, page],
   );
 
-  const beginHostedCommunity = React.useCallback(
-    () => setIsHostedSignInOpen(true),
-    [],
-  );
+  const beginHostedCommunity = React.useCallback(() => {
+    if (builderlabHostedCommunitiesEnabled) {
+      setIsHostedSignInOpen(true);
+      return;
+    }
+    if (defaultRelayUrl) startConnection(defaultRelayUrl);
+  }, [defaultRelayUrl, startConnection]);
 
   const transitionDirection =
     transitionMode === "backward" ? "backward" : "forward";
@@ -166,7 +172,9 @@ export function WelcomeSetup({
                     onClick={beginHostedCommunity}
                     type="button"
                   >
-                    Create a community
+                    {builderlabHostedCommunitiesEnabled
+                      ? "Create a community"
+                      : "Connect to Dreamatron"}
                   </button>
                 </Card>
                 <Card
@@ -207,7 +215,11 @@ export function WelcomeSetup({
                 >
                   <button
                     data-testid="existing-choice-owner"
-                    onClick={beginHostedCommunity}
+                    onClick={() =>
+                      builderlabHostedCommunitiesEnabled
+                        ? beginHostedCommunity()
+                        : showPage("member")
+                    }
                     type="button"
                   >
                     I own the community
@@ -315,7 +327,9 @@ export function WelcomeSetup({
               </div>
             </OnboardingSlideTransition>
           )}
-          {isHostedSignInOpen && page !== "owned" ? (
+          {builderlabHostedCommunitiesEnabled &&
+          isHostedSignInOpen &&
+          page !== "owned" ? (
             <HostedCommunityOnboarding
               onBack={() => setIsHostedSignInOpen(false)}
               onReady={() => {

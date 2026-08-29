@@ -1,0 +1,92 @@
+name: Dreamatron Windows Desktop
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Dreamatron Buzz for Windows
+    if: github.repository == 'Dreamatron/buzz'
+    runs-on: windows-latest
+    timeout-minutes: 75
+    env:
+      TARGET: x86_64-pc-windows-msvc
+      BUZZ_DESKTOP_BUILD_RELAY_URL: wss://lucifer.tail98fefd.ts.net:8443
+      BUZZ_DESKTOP_BUILD_AUTO_CONNECT_DEFAULT_RELAY: "1"
+      VITE_BUZZ_HOSTED_COMMUNITY_PROVIDER: dreamatron
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Add Rust target
+        shell: bash
+        run: rustup target add "$TARGET"
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.14.1
+          package-manager-cache: false
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: 11.4.0
+
+      - name: Install dependencies
+        shell: bash
+        run: pnpm install --frozen-lockfile
+
+      - name: Derive Dreamatron build version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE_VERSION=$(node -p "require('./desktop/package.json').version")
+          CORE_VERSION=${BASE_VERSION%%-*}
+          IFS=. read -r MAJOR MINOR PATCH <<< "$CORE_VERSION"
+          VERSION="$MAJOR.$MINOR.$((PATCH + 1))-dreamatron.${GITHUB_RUN_NUMBER}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Patch build version
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          cd desktop && node scripts/set-version-from-tag.mjs "$VERSION"
+          cd src-tauri && cargo update --workspace
+
+      - name: Generate Dreamatron bundle config
+        shell: bash
+        run: |
+          cat > desktop/src-tauri/tauri.dreamatron.conf.json <<'JSON'
+          {
+            "productName": "Dreamatron Buzz",
+            "identifier": "ai.dreamatron.buzz",
+            "bundle": {
+              "createUpdaterArtifacts": false
+            }
+          }
+          JSON
+
+      - name: Build sidecars
+        shell: bash
+        run: |
+          cargo build --release --target "$TARGET" -p buzz-acp -p buzz-agent -p buzz-dev-mcp -p git-credential-nostr -p buzz-cli
+          ./scripts/bundle-sidecars.sh "$TARGET"
+
+      - name: Build unsigned Windows installer
+        shell: bash
+        env:
+          CMAKE_POLICY_VERSION_MINIMUM: "3.5"
+        run: cd desktop && pnpm tauri build --target "$TARGET" --bundles nsis --config src-tauri/tauri.dreamatron.conf.json
+
+      - name: Upload installer
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: dreamatron-buzz-windows-${{ github.sha }}
+          path: desktop/src-tauri/target/${{ env.TARGET }}/release/bundle/nsis/*.exe
+          if-no-files-found: error
+          retention-days: 14
