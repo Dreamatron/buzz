@@ -70,6 +70,7 @@ import { ModerationQueueCard } from "./ModerationQueueCard";
 import { NotificationSettingsCard } from "./NotificationSettingsCard";
 import { AgentsSettingsPanel } from "./AgentsSettingsPanel";
 import { HostedCommunitiesSettingsCard } from "./HostedCommunitiesSettingsCard";
+import { builderlabHostedCommunitiesEnabled } from "@/shared/buildConfig";
 import {
   SettingsOptionGroup,
   SettingsOptionGroupList,
@@ -843,7 +844,14 @@ export function renderSettingsSection(
     case "shortcuts":
       return <KeyboardShortcutsCard />;
     case "hosted-communities":
-      return <HostedCommunitiesSettingsCard />;
+      return builderlabHostedCommunitiesEnabled ? (
+        <HostedCommunitiesSettingsCard />
+      ) : (
+        <ProfileSettingsCard
+          currentPubkey={props.currentPubkey}
+          fallbackDisplayName={props.fallbackDisplayName}
+        />
+      );
     case "community-members":
       return (
         <CommunityMembersSettingsCard currentPubkey={props.currentPubkey} />

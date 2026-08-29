@@ -13,6 +13,7 @@ import {
   useFeatureSnapshot,
 } from "@/shared/features/useFeatureEnabled";
 import { topChromeBackdrop } from "@/shared/layout/chromeLayout";
+import { builderlabHostedCommunitiesEnabled } from "@/shared/buildConfig";
 import { cn } from "@/shared/lib/cn";
 import {
   Sidebar,
@@ -145,6 +146,12 @@ export function SettingsView({
       // Open relays have no membership snapshot or invite controls.
       if (s.value === "community-members") {
         return canManageCommunityMembers(myMembershipQuery.data);
+      }
+      if (
+        s.value === "hosted-communities" &&
+        !builderlabHostedCommunitiesEnabled
+      ) {
+        return false;
       }
       return true;
     });
